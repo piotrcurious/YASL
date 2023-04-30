@@ -204,25 +204,18 @@ float findCoilInductance() {
 
   analogWrite(pwmPin, pwmMax); // write maximum PWM value to LED light
 
-  while (solarVoltage > solarThreshold) { // while it is not dark
-    readSensors(); // read solar panel and battery voltages, and motion sensor value
-Okay, I will continue the code.
-
-```c
-    frequency = pwmFreq; // set frequency to PWM frequency
-    period = 1.0 / frequency; // calculate period from frequency
-    delay(period * 1000); // wait for one period
-  }
-
-  frequency = pwmFreq / 2; // set frequency to half of PWM frequency
+  frequency = pwmFreq; // set frequency to PWM frequency
   period = 1.0 / frequency; // calculate period from frequency
-  analogWrite(pwmPin, pwmMax / 2); // write half of maximum PWM value to LED light
+  delay(period * 1000); // wait for one period
 
-  while (solarVoltage > solarThreshold / 2) { // while solar panel voltage is above half of the threshold
-    readSensors(); // read solar panel and battery voltages, and motion sensor value
+  readSensors(); // read solar panel and battery voltages, and motion sensor value
+
+  while (solarVoltage > solarThreshold && frequency > 1) { // while solar panel voltage is above the threshold and frequency is above 1 Hz
     frequency /= 2; // halve the frequency
     period = 1.0 / frequency; // calculate period from frequency
+    analogWrite(pwmPin, pwmMax / 2); // write half of maximum PWM value to LED light
     delay(period * 1000); // wait for one period
+    readSensors(); // read solar panel and battery voltages, and motion sensor value
   }
 
   inductance = (5.0 / (2 * PI * frequency)) - (10000.0 / (2 * PI * frequency)); // calculate inductance using cutoff frequency and resistor value
@@ -230,10 +223,31 @@ Okay, I will continue the code.
   return inductance; // return inductance value
 }
 
+
+//This strategy uses a while loop with two conditions: solar panel voltage and frequency. It also reads the sensors inside the loop to update the solar panel voltage. This way, it avoids looping forever if the solar panel voltage does not change or if the frequency becomes too low.
+
+
 // Function to enter deep sleep mode
 void sleepNow() {
   // TODO: implement deep sleep mode using watchdog timer or external interrupt
 }
+
+// Function to enter deep sleep mode
+void sleepNow() {
+  // use watchdog timer to wake up after a certain time
+  WDTCSR = bit(WDCE) | bit(WDE); // enable watchdog change and watchdog system reset
+  WDTCSR = bit(WDIE) | bit(WDP2) | bit(WDP1); // enable watchdog interrupt and set prescaler to 1 second
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN); // set sleep mode to power down
+  sleep_enable(); // enable sleep mode
+  sleep_mode(); // enter sleep mode
+}
+
+// Function to handle watchdog interrupt
+ISR(WDT_vect) {
+  // do nothing, just wake up from sleep mode
+}
+
+//This function uses the watchdog timer to enter deep sleep mode and wake up after one second. It also sets an interrupt handler to do nothing when the watchdog timer expires. This way, it avoids resetting the Arduino when waking up from sleep mode.
 
 // Function to enter low power mode
 void lowPowerMode() {
