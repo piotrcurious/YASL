@@ -1,6 +1,7 @@
 
 #include "Arduino.h"
 #include "avr/interrupt.h"
+#include "EEPROM.h"
 
 int TCCR2B = 0;
 int WDTCSR = 0;
@@ -23,8 +24,14 @@ int WDP0 = 0;  // Bit 0
 
 MockSerial Serial;
 MockWire Wire;
+MockEEPROM EEPROM;
 
-SimSensors sim = { 12.0f, 0.0f, 100.0f, 3.7f, false, true };
+uint8_t mock_eeprom_storage[1024] = {0};
+uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
+void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
+void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
+
+SimSensors sim = { 12.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, false, true };
 
 unsigned long current_time_ms = 0;
 
@@ -33,7 +40,20 @@ unsigned long millis() {
 }
 
 void update_sim() {
-    current_time_ms += 100; // Step 100ms
+    float chargeAH = sim.batteryCapAH * (sim.batteryV - 3.0f) / (4.2f - 3.0f);
+    unsigned long step_ms = 100;
+    current_time_ms += step_ms;
+
+    // Net current (Solar in - System out)
+    float netMA = sim.solarCurrentMA - sim.systemCurrentMA;
+    float deltaAH = (netMA / 1000.0f) * (step_ms / 3600000.0f);
+
+    chargeAH += deltaAH;
+    if (chargeAH < 0) chargeAH = 0;
+    if (chargeAH > sim.batteryCapAH) chargeAH = sim.batteryCapAH;
+
+    // Linear Vbat model: 3.0V (0%) to 4.2V (100%)
+    sim.batteryV = 3.0f + (chargeAH / sim.batteryCapAH) * (4.2f - 3.0f);
 }
 
 void delay(unsigned long ms) {
@@ -60,7 +80,12 @@ int analogRead(int pin) {
     return 0;
 }
 
-void analogWrite(int pin, int val) {}
+void analogWrite(int pin, int val) {
+    if (pin == 3) { // LED
+        // Assume LED at 100% takes 500mA
+        sim.systemCurrentMA = 10.0f + (val / 255.0f) * 500.0f;
+    }
+}
 
 void set_sleep_mode(int mode) {}
 void sleep_enable() {}

@@ -183,6 +183,8 @@ struct SimSensors {
     float solarShuntV;
     float solarCurrentMA;
     float batteryV;
+    float batteryCapAH;
+    float systemCurrentMA;
     bool  motion;
     bool  ina219_ok;
 };

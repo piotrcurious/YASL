@@ -72,6 +72,7 @@ struct SystemState {
 // Global State
 volatile SystemState sys = {0,0,0,0,0,true,false,0,0,'N'};
 bool ina219_present = false;
+int motion_intensity = 0; // Cumulative motion tracker for adaptive brightness
 
 // MPPT Trackers
 float prevSolarP = 0.0f;
@@ -152,6 +153,7 @@ void loop() {
         wakePIR = false;
         sys.isMotion = true;
         motionStart = now;
+        motion_intensity++; // Increment on each trigger
         Serial.println(F("WAKE: PIR"));
     }
     if (wakeWDT) {
@@ -300,21 +302,39 @@ void updateMPPT() {
 
 void updateLight() {
     static int currentLED = 0;
+    static unsigned long last_motion_check = 0;
     unsigned long now = millis();
 
     // Low Voltage Disconnect
     if (sys.batV < BAT_MIN_V) {
         sys.ledPWM = PWM_LED_OFF;
+        motion_intensity = 0;
     }
     else if (sys.isMotion) {
         if (now - motionStart < MOTION_ON_MS) {
-            sys.ledPWM = PWM_LED_MAX;
+            // Adaptive Brightness: more motion = higher brightness (if battery allows)
+            // motion_intensity caps at 5, scaling brightness between DIM and MAX
+            int adaptive_max = map(constrain(motion_intensity, 1, 5), 1, 5, (PWM_LED_MAX/2), PWM_LED_MAX);
+
+            // Battery scaling (original logic)
+            int bat_limit = map(constrain(sys.batV * 100, BAT_MIN_V * 100, BAT_MAX_V * 100),
+                                BAT_MIN_V * 100, BAT_MAX_V * 100, PWM_LED_DIM, adaptive_max);
+
+            sys.ledPWM = constrain(bat_limit, PWM_LED_DIM, PWM_LED_MAX);
+
+            // Re-read PIR in loop to maintain intensity if active
+            if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > 1000)) {
+                motion_intensity = constrain(motion_intensity + 1, 0, 10);
+                last_motion_check = now;
+            }
         } else {
             sys.isMotion = false;
+            motion_intensity = 0;
             sys.ledPWM = PWM_LED_DIM;
         }
     } else {
         sys.ledPWM = PWM_LED_DIM;
+        motion_intensity = 0;
     }
 
     // Smooth PWM transition

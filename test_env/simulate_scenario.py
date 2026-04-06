@@ -61,6 +61,20 @@ int main() {
     sim.solarBusV = 15.0f;
     for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
 
+    // Scenario 5: Low Battery Recovery
+    std::cout << "\\n[SCENARIO] RECOVERY - Low battery test" << std::endl;
+    sim.ina219_ok = true;
+    setup();
+    sim.batteryV = 2.9f; // Below MIN
+    sim.solarBusV = 0.0f;
+    sim.solarCurrentMA = 0.0f;
+    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
+
+    std::cout << "[SIM] Starting solar charging..." << std::endl;
+    sim.solarBusV = 18.0f;
+    sim.solarCurrentMA = 1000.0f; // High charge current
+    for(int i = 0; i < 50; ++i) { loop(); update_sim(); }
+
     return 0;
 }
 """
