@@ -71,6 +71,7 @@ struct SystemState {
 
 // Global State
 volatile SystemState sys = {0,0,0,0,0,true,false,0,0,'N'};
+bool ina219_present = false;
 
 // MPPT Trackers
 float prevSolarP = 0.0f;
@@ -126,9 +127,11 @@ void setup() {
     Serial.println(F("YASL CONSOLIDATED v1.0 INIT"));
 
     if (!ina219.begin()) {
-        Serial.println(F("ERR: INA219 FAILED"));
+        Serial.println(F("ERR: INA219 FAILED - Using fallback ADC"));
+        ina219_present = false;
     } else {
         Serial.println(F("INA219 OK"));
+        ina219_present = true;
     }
 
     // Set Timer2 (pins 3, 11) for ~976Hz PWM
@@ -203,18 +206,36 @@ void loop() {
         lastLog = now;
     }
 
+    // --- Command Processing (Simple Diagnostic Stub) ---
+    if (Serial.available() > 0) {
+        char cmd = Serial.read();
+        if (cmd == 'd') { // Dump system state info
+            Serial.println(F("--- DIAGNOSTICS ---"));
+            Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
+            Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
+        }
+    }
+
     delay(50); // Loop stability
 }
 
 // --- Support Functions ---
 
 void readSensors() {
-    // INA219
-    float bus = ina219.getBusVoltage_V();
-    float shunt = ina219.getShuntVoltage_mV();
-    sys.solarV = bus + (shunt / 1000.0f);
-    sys.solarI = ina219.getCurrent_mA();
-    sys.solarP = bus * sys.solarI;
+    if (ina219_present) {
+        // INA219 Primary Sensor
+        float bus = ina219.getBusVoltage_V();
+        float shunt = ina219.getShuntVoltage_mV();
+        sys.solarV = bus + (shunt / 1000.0f);
+        sys.solarI = ina219.getCurrent_mA();
+        sys.solarP = bus * sys.solarI;
+    } else {
+        // Fallback to Raw ADC
+        float rawSolar = getSmoothedADC(PIN_SOLAR_ADC);
+        sys.solarV = rawSolar * (REF_VOLTAGE / 1023.0f) * SOLAR_DIVIDER_RATIO;
+        sys.solarI = 0.0f; // Cannot measure current without shunt/INA
+        sys.solarP = 0.0f;
+    }
 
     // Bat ADC (Averaged)
     float raw = getSmoothedADC(PIN_BAT_ADC);
@@ -231,6 +252,19 @@ float getSmoothedADC(uint8_t pin) {
 }
 
 void updateMPPT() {
+    // If INA219 is missing, we can only do very basic charging (not MPPT)
+    if (!ina219_present) {
+        if (sys.solarV > sys.batV + 1.0f && sys.batV < BAT_MAX_V) {
+            sys.mpptPWM = PWM_MPPT_MAX; // full on if simple charging
+            sys.chargeMode = 'S'; // Simple
+        } else {
+            sys.mpptPWM = 0;
+            sys.chargeMode = 'L';
+        }
+        analogWrite(PIN_MPPT_PWM, sys.mpptPWM);
+        return;
+    }
+
     // Overvoltage Protection
     if (sys.batV > BAT_MAX_V + 0.1f) {
         sys.mpptPWM = 0;
@@ -265,6 +299,7 @@ void updateMPPT() {
 }
 
 void updateLight() {
+    static int currentLED = 0;
     unsigned long now = millis();
 
     // Low Voltage Disconnect
@@ -282,7 +317,11 @@ void updateLight() {
         sys.ledPWM = PWM_LED_DIM;
     }
 
-    analogWrite(PIN_LED_PWM, sys.ledPWM);
+    // Smooth PWM transition
+    if (currentLED < sys.ledPWM) currentLED++;
+    else if (currentLED > sys.ledPWM) currentLED--;
+
+    analogWrite(PIN_LED_PWM, currentLED);
 }
 
 void sleepSystem() {

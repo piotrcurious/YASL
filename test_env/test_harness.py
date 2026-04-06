@@ -8,9 +8,6 @@ def run_test(ino_path):
     with open(ino_path, 'r') as f:
         content = f.read()
 
-    # Improved prototype extraction: only match things that look like function starts
-    # and they must have a { later on that line or next lines, and we stop at {
-    # This avoids matching variable declarations.
     matches = re.finditer(r'^\s*(void|int|float|double|long|byte|boolean)\s+(\w+)\s*\(([^)]*)\)\s*\{', content, re.MULTILINE | re.DOTALL)
     prototypes_str = ""
     for match in matches:
@@ -54,15 +51,20 @@ int main() {{
         return False, str(e)
 
     try:
-        result = subprocess.run(["./test_env/test_bin"], capture_output=True, text=True, timeout=2)
-        if result.returncode == 0:
-            return True, result.stdout
-        else:
-            return False, result.stderr
-    except subprocess.TimeoutExpired:
-        return False, "Timed out"
-    except Exception as e:
-        return False, str(e)
+        try:
+            result = subprocess.run(["./test_env/test_bin"], capture_output=True, text=True, timeout=2)
+            success = (result.returncode == 0)
+            output = result.stdout if success else result.stderr
+        except subprocess.TimeoutExpired:
+            success, output = False, "Timed out"
+        except Exception as e:
+            success, output = False, str(e)
+    finally:
+        # Cleanup
+        if os.path.exists("test_env/test_bin"): os.remove("test_env/test_bin")
+        if os.path.exists("test_env/main.cpp"): os.remove("test_env/main.cpp")
+
+    return success, output
 
 if __name__ == "__main__":
     ino_files = []
