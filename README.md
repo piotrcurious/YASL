@@ -23,9 +23,16 @@ The `YASL_Consolidated.ino` file represents the most stable and feature-rich ver
 The project includes a mock Arduino environment in `test_env/` to verify compilation and basic loop execution on non-Arduino systems.
 
 ### Running Tests
-To test the files, use the provided Python harness:
+The test environment requires `g++` to be installed on your system. To test the files, use the provided Python scripts:
+
+**Compilation Test:**
 ```bash
 python3 test_env/test_harness.py
+```
+
+**Scenario Simulation:**
+```bash
+python3 test_env/simulate_scenario.py
 ```
 
 ## Disclaimer

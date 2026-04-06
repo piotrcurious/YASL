@@ -1,3 +1,4 @@
+
 #ifndef ARDUINO_MOCK_H
 #define ARDUINO_MOCK_H
 
@@ -103,6 +104,8 @@ public:
     void print(float f, int p) { std::cout << f; }
     void print(int i) { std::cout << i; }
     void print(long l) { std::cout << l; }
+    void print(unsigned int i) { std::cout << i; }
+    void print(unsigned long l) { std::cout << l; }
     void print(bool b) { std::cout << (b ? "1" : "0"); }
     void println() { std::cout << std::endl; }
     void println(const std::string& s) { std::cout << s << std::endl; }
@@ -113,6 +116,8 @@ public:
     void println(long l) { std::cout << l << std::endl; }
     void println(bool b) { std::cout << (b ? "1" : "0") << std::endl; }
     void flush() {}
+    int available() { return 0; }
+    int read() { return -1; }
     operator bool() { return true; }
 };
 
@@ -171,5 +176,17 @@ inline String operator+(const char* a, const String& b) {
     res += b;
     return res;
 }
+
+// --- Simulation Extensions ---
+struct SimSensors {
+    float solarBusV;
+    float solarShuntV;
+    float solarCurrentMA;
+    float batteryV;
+    bool  motion;
+    bool  ina219_ok;
+};
+extern SimSensors sim;
+void update_sim();
 
 #endif // ARDUINO_MOCK_H
