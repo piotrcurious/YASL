@@ -38,7 +38,7 @@ const float SOLAR_DIVIDER_RATIO = 4.0f;
 // Battery (Li-Ion/Li-Po typical)
 const float BAT_MAX_V       = 4.15f;  // Charge limit (Conservative)
 const float BAT_MIN_V       = 3.00f;  // Low Voltage Disconnect
-const float BAT_RECONNECT_V = 3.30f;  // Re-enable load voltage after LVD
+const float BAT_RECONNECT_V = 3.25f;  // Re-enable load voltage after LVD
 
 // Solar & MPPT
 const float SOLAR_START_V   = 5.0f;   // Min voltage to start switching
@@ -251,6 +251,11 @@ void loop() {
             Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
             Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
             Serial.print(F("Mode: ")); Serial.println(sys.chargeMode);
+            Serial.print(F("Intensity: ")); Serial.println(motion_intensity);
+            #ifdef SIMULATION
+            Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
+            Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
+            #endif
         }
         else if (cmd == 'c') { // View Config
             Serial.println(F("--- CONFIG ---"));
@@ -271,6 +276,12 @@ void loop() {
             else if (param == 'T') { config.motionTimeout = Serial.parseInt(); }
             saveConfig();
             Serial.println(F("Param Saved"));
+        }
+        else if (cmd == 'v') { // View Stats (Sim only)
+            #ifdef SIMULATION
+            Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
+            Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
+            #endif
         }
         else if (cmd == 'r') { // Reset Defaults
             config.magic = 0;
@@ -386,10 +397,21 @@ void updateMPPT() {
 void updateLight() {
     static int currentLED = 0;
     static unsigned long last_motion_check = 0;
+    static bool lvd_active = false;
     unsigned long now = millis();
 
-    // Low Voltage Disconnect
-    if (sys.batV < config.batMinV) {
+    // Low Voltage Disconnect with Hysteresis
+    if (!lvd_active && sys.batV < config.batMinV) {
+        lvd_active = true;
+        sys.ledPWM = PWM_LED_OFF;
+        motion_intensity = 0;
+        Serial.println(F("LVD: Active"));
+    } else if (lvd_active && sys.batV > BAT_RECONNECT_V) {
+        lvd_active = false;
+        Serial.println(F("LVD: Recovered"));
+    }
+
+    if (lvd_active) {
         sys.ledPWM = PWM_LED_OFF;
         motion_intensity = 0;
     }

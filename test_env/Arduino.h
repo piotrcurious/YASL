@@ -93,6 +93,8 @@ long map(long x, long in_min, long in_max, long out_min, long out_max);
 
 #define F(x) x
 
+#define SIMULATION 1
+
 // Mock Serial class
 class MockSerial {
     std::queue<char> rx_buffer;
@@ -106,6 +108,7 @@ public:
     void print(long l) { std::cout << l; }
     void print(unsigned int i) { std::cout << i; }
     void print(unsigned long l) { std::cout << l; }
+    void print(double d) { std::cout << d; }
     void print(bool b) { std::cout << (b ? "1" : "0"); }
     void println() { std::cout << std::endl; }
     void println(const std::string& s) { std::cout << s << std::endl; }
@@ -114,6 +117,7 @@ public:
     void println(float f, int p) { std::cout << f << std::endl; }
     void println(int i) { std::cout << i << std::endl; }
     void println(long l) { std::cout << l << std::endl; }
+    void println(double d) { std::cout << d << std::endl; }
     void println(bool b) { std::cout << (b ? "1" : "0") << std::endl; }
     void flush() {}
     int available() { return rx_buffer.size(); }
@@ -211,6 +215,8 @@ struct SimSensors {
     float batteryV;
     float batteryCapAH;
     float systemCurrentMA;
+    double harvestedMAH;
+    double consumedMAH;
     bool  motion;
     bool  ina219_ok;
 };
