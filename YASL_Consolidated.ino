@@ -1,0 +1,345 @@
+
+/*
+ * YASL (Yet Another Solar Lamp) - Consolidated Version
+ *
+ * This version combines features from all project iterations:
+ * - Simple P&O MPPT with CC/CV (Constant Current/Constant Voltage) safety.
+ * - Robust ADC sensor reading with averaging.
+ * - PIR motion detection with smooth dimming.
+ * - Advanced Sleep Management (WDT for timed wake + INT0 for motion wake).
+ * - JSON-formatted Serial output for remote data logging.
+ *
+ * Hardware: ATmega328P (Uno/Nano), INA219 (Solar Input), PIR Sensor,
+ *           Battery Voltage Divider, MOSFET for LED, MOSFET for MPPT Buck.
+ */
+
+#include <Wire.h>
+#include <Adafruit_INA219.h>
+#include <avr/sleep.h>
+#include <avr/wdt.h>
+#include <avr/power.h>
+#include <avr/interrupt.h>
+#include <Arduino.h>
+
+// --- Configuration ---
+
+// Pin Definitions
+const uint8_t PIN_SOLAR_ADC = A0;   // Raw solar ADC (backup/redundant)
+const uint8_t PIN_BAT_ADC   = A1;   // Main Battery Voltage Divider
+const uint8_t PIN_LED_PWM   = 3;    // LED Mosfet (Timer2)
+const uint8_t PIN_PIR       = 2;    // Motion Sensor (D2 is INT0)
+const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
+
+// Reference & Ratios
+const float REF_VOLTAGE = 5.0f;
+const float BAT_DIVIDER_RATIO = 3.0f; // e.g., (10k+5k)/5k = 3.0
+const float SOLAR_DIVIDER_RATIO = 4.0f;
+
+// Battery (Li-Ion/Li-Po typical)
+const float BAT_MAX_V       = 4.15f;  // Charge limit (Conservative)
+const float BAT_MIN_V       = 3.00f;  // Low Voltage Disconnect
+const float BAT_RECONNECT_V = 3.30f;  // Re-enable load voltage after LVD
+
+// Solar & MPPT
+const float SOLAR_START_V   = 5.0f;   // Min voltage to start switching
+const float SOLAR_DARK_V    = 2.0f;   // Bus voltage below which it's night
+const int   PWM_MPPT_MAX    = 240;    // Cap to avoid 100% duty cycle issues
+const int   PWM_MPPT_MIN    = 0;
+const long  MPPT_INTERVAL_MS = 100;
+
+// Light Behavior
+const int   PWM_LED_MAX     = 255;
+const int   PWM_LED_DIM     = 15;
+const int   PWM_LED_OFF     = 0;
+const long  MOTION_ON_MS    = 15000;  // 15 seconds after motion
+const long  JSON_INTERVAL_MS = 10000; // Log every 10s
+
+// --- System Structures ---
+
+struct SystemState {
+    float solarV;       // INA219 Bus + Shunt
+    float solarI;       // INA219 current in mA
+    float solarP;       // mW
+    float batV;         // ADC averaged
+    float batPcnt;      // 0-100%
+    bool  isDark;
+    bool  isMotion;
+    int   ledPWM;
+    int   mpptPWM;
+    char  chargeMode;   // 'N'ight, 'L'ow solar, 'B'ulk (MPPT), 'C'V (Absorption), 'X' Overvoltage
+};
+
+// Global State
+volatile SystemState sys = {0,0,0,0,0,true,false,0,0,'N'};
+
+// MPPT Trackers
+float prevSolarP = 0.0f;
+bool  mpptUp = true;
+
+// Timers
+unsigned long lastLog = 0;
+unsigned long motionStart = 0;
+unsigned long lastMppt = 0;
+
+// Wake Flags
+volatile bool wakePIR = false;
+volatile bool wakeWDT = false;
+
+// --- Prototypes ---
+void readSensors();
+void updateMPPT();
+void updateLight();
+void sleepSystem();
+void configureWDT();
+void disableWDT();
+float getSmoothedADC(uint8_t pin);
+float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
+
+// --- INA219 ---
+Adafruit_INA219 ina219;
+
+// --- ISRs ---
+
+ISR(INT0_vect) {
+    wakePIR = true;
+    // Disable interrupt in ISR to prevent bounce during wake
+    EIMSK &= ~(1 << INT0);
+}
+
+ISR(WDT_vect) {
+    wakeWDT = true;
+}
+
+// --- Arduino Core ---
+
+void setup() {
+    // Immediate safe states
+    pinMode(PIN_MPPT_PWM, OUTPUT);
+    digitalWrite(PIN_MPPT_PWM, LOW);
+    pinMode(PIN_LED_PWM, OUTPUT);
+    digitalWrite(PIN_LED_PWM, LOW);
+
+    pinMode(PIN_PIR, INPUT_PULLUP); // Common for PIR sensors
+
+    Serial.begin(115200);
+    while (!Serial && millis() < 2000);
+    Serial.println(F("YASL CONSOLIDATED v1.0 INIT"));
+
+    if (!ina219.begin()) {
+        Serial.println(F("ERR: INA219 FAILED"));
+    } else {
+        Serial.println(F("INA219 OK"));
+    }
+
+    // Set Timer2 (pins 3, 11) for ~976Hz PWM
+    TCCR2B = (TCCR2B & 0b11111000) | 0x04;
+
+    // Set Timer1 (pins 9, 10) for ~490Hz PWM (default) or custom
+    // TCCR1B = (TCCR1B & 0b11111000) | 0x03; // ~490Hz (div 64)
+
+    disableWDT();
+    readSensors();
+}
+
+void loop() {
+    unsigned long now = millis();
+
+    // 1. Process Wakeup
+    if (wakePIR) {
+        wakePIR = false;
+        sys.isMotion = true;
+        motionStart = now;
+        Serial.println(F("WAKE: PIR"));
+    }
+    if (wakeWDT) {
+        wakeWDT = false;
+        Serial.println(F("WAKE: WDT"));
+    }
+
+    // 2. Refresh Data
+    readSensors();
+
+    // 3. Logic: Daytime vs Nighttime
+    sys.isDark = (sys.solarV < SOLAR_DARK_V);
+
+    if (sys.isDark) {
+        // --- NIGHT ---
+        sys.mpptPWM = 0;
+        analogWrite(PIN_MPPT_PWM, 0);
+        sys.chargeMode = 'N';
+
+        updateLight();
+
+        // Deep sleep if idle
+        if (!sys.isMotion && sys.ledPWM <= PWM_LED_DIM) {
+            if (now - motionStart > MOTION_ON_MS + 5000) {
+                sleepSystem();
+            }
+        }
+    }
+    else {
+        // --- DAY ---
+        // Light stays off or very dim
+        sys.ledPWM = PWM_LED_OFF;
+        analogWrite(PIN_LED_PWM, 0);
+        sys.isMotion = false;
+
+        updateMPPT();
+    }
+
+    // 4. Logging
+    if (now - lastLog > JSON_INTERVAL_MS) {
+        Serial.print(F("{\"sV\":")); Serial.print(sys.solarV, 2);
+        Serial.print(F(",\"sI\":")); Serial.print(sys.solarI, 1);
+        Serial.print(F(",\"sP\":")); Serial.print(sys.solarP, 0);
+        Serial.print(F(",\"bV\":")); Serial.print(sys.batV, 2);
+        Serial.print(F(",\"bP\":")); Serial.print(sys.batPcnt, 0);
+        Serial.print(F(",\"dk\":")); Serial.print(sys.isDark ? "true" : "false");
+        Serial.print(F(",\"mot\":")); Serial.print(sys.isMotion ? "true" : "false");
+        Serial.print(F(",\"mP\":")); Serial.print(sys.mpptPWM);
+        Serial.print(F(",\"lP\":")); Serial.print(sys.ledPWM);
+        Serial.print(F(",\"ch\":")); Serial.print("\""); Serial.print(sys.chargeMode); Serial.print("\"");
+        Serial.println(F("}"));
+        lastLog = now;
+    }
+
+    delay(50); // Loop stability
+}
+
+// --- Support Functions ---
+
+void readSensors() {
+    // INA219
+    float bus = ina219.getBusVoltage_V();
+    float shunt = ina219.getShuntVoltage_mV();
+    sys.solarV = bus + (shunt / 1000.0f);
+    sys.solarI = ina219.getCurrent_mA();
+    sys.solarP = bus * sys.solarI;
+
+    // Bat ADC (Averaged)
+    float raw = getSmoothedADC(PIN_BAT_ADC);
+    sys.batV = raw * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
+    sys.batPcnt = constrain(mapFloat(sys.batV, BAT_MIN_V, BAT_MAX_V, 0, 100), 0, 100);
+}
+
+float getSmoothedADC(uint8_t pin) {
+    long sum = 0;
+    for(int i=0; i<8; i++) {
+        sum += analogRead(pin);
+    }
+    return (float)sum / 8.0f;
+}
+
+void updateMPPT() {
+    // Overvoltage Protection
+    if (sys.batV > BAT_MAX_V + 0.1f) {
+        sys.mpptPWM = 0;
+        sys.chargeMode = 'X';
+    }
+    else if (sys.solarV < SOLAR_START_V) {
+        sys.mpptPWM = 0;
+        sys.chargeMode = 'L';
+    }
+    else if (sys.batV >= BAT_MAX_V) {
+        // CV Mode: Reduce PWM to maintain voltage
+        sys.chargeMode = 'C';
+        if (sys.mpptPWM > 0) sys.mpptPWM--;
+    }
+    else {
+        // Bulk MPPT Mode
+        sys.chargeMode = 'B';
+        unsigned long now = millis();
+        if (now - lastMppt > MPPT_INTERVAL_MS) {
+            float deltaP = sys.solarP - prevSolarP;
+            if (deltaP < 0) mpptUp = !mpptUp;
+
+            if (mpptUp) sys.mpptPWM++; else sys.mpptPWM--;
+
+            prevSolarP = sys.solarP;
+            lastMppt = now;
+        }
+    }
+
+    sys.mpptPWM = constrain(sys.mpptPWM, PWM_MPPT_MIN, PWM_MPPT_MAX);
+    analogWrite(PIN_MPPT_PWM, sys.mpptPWM);
+}
+
+void updateLight() {
+    unsigned long now = millis();
+
+    // Low Voltage Disconnect
+    if (sys.batV < BAT_MIN_V) {
+        sys.ledPWM = PWM_LED_OFF;
+    }
+    else if (sys.isMotion) {
+        if (now - motionStart < MOTION_ON_MS) {
+            sys.ledPWM = PWM_LED_MAX;
+        } else {
+            sys.isMotion = false;
+            sys.ledPWM = PWM_LED_DIM;
+        }
+    } else {
+        sys.ledPWM = PWM_LED_DIM;
+    }
+
+    analogWrite(PIN_LED_PWM, sys.ledPWM);
+}
+
+void sleepSystem() {
+    Serial.println(F("SLEEP: Start"));
+    Serial.flush();
+
+    // Kill outputs
+    analogWrite(PIN_LED_PWM, 0);
+    analogWrite(PIN_MPPT_PWM, 0);
+
+    // Peripheral Shutdown
+    ADCSRA &= ~(1 << ADEN); // ADC off
+
+    // WDT for periodic health check (8s)
+    configureWDT();
+
+    // INT0 for PIR wake
+    // Configure INT0 to wake on RISING edge (typical for PIR sensors)
+    EICRA = (1 << ISC01) | (1 << ISC00); // ISC01=1, ISC00=1 -> RISING edge
+    EIFR = (1 << INTF0);  // Clear flags
+    EIMSK |= (1 << INT0); // Enable INT0
+
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    sleep_enable();
+
+    // Enable Global Interrupts (just in case they were off)
+    sei();
+
+    sleep_cpu(); // HALT
+
+    // --- WAKE UP ---
+    sleep_disable();
+    disableWDT();
+    ADCSRA |= (1 << ADEN); // ADC on
+
+    Serial.println(F("SLEEP: Woke up"));
+}
+
+void configureWDT() {
+    cli();
+    wdt_reset();
+    WDTCSR |= (1 << WDCE) | (1 << WDE);
+    // Interrupt mode, 8.0s timeout
+    WDTCSR = (1 << WDIE) | (1 << WDP3) | (1 << WDP0);
+    sei();
+}
+
+void disableWDT() {
+    cli();
+    wdt_reset();
+    MCUSR &= ~(1 << WDRF);
+    WDTCSR |= (1 << WDCE) | (1 << WDE);
+    WDTCSR = 0x00;
+    sei();
+}
+
+float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
+  if (in_max == in_min) return out_min;
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}

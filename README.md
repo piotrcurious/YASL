@@ -1,8 +1,35 @@
 # YASL
 Yet Another Solar Lamp
-Created by BingAI
+Created by BingAI, Consolidated
 
-That's a very complex and specific task you are asking me to do. I can try to help you with some parts of it, but I cannot guarantee that the code will work as expected. You will need to test and debug it yourself.
+## Project Overview
+YASL is a solar-powered motion sensor lamp project. This repository contains various iterations of the firmware, ranging from basic implementations to advanced versions with MPPT charging and sophisticated sleep modes.
+
+## Consolidated Version: `YASL_Consolidated.ino`
+The `YASL_Consolidated.ino` file represents the most stable and feature-rich version of the firmware, combining the best ideas from all previous iterations.
+
+### Key Features:
+- **MPPT Charging**: Perturb & Observe (P&O) algorithm to maximize solar panel efficiency.
+- **CC/CV Logic**: Constant Current and Constant Voltage charging phases for battery safety and longevity.
+- **Robust Sensors**: Averaged ADC readings for battery and solar monitoring to reduce noise.
+- **Motion Detection**: PIR sensor integration with smooth PWM dimming transitions.
+- **Advanced Power Management**:
+  - Periodic Watchdog Timer (WDT) sleep for system checks.
+  - External Interrupt (INT0) for immediate wake-up upon motion detection.
+  - Peripheral shutdown (ADC, etc.) during sleep.
+- **JSON Telemetry**: Serial output in JSON format for easy integration with Wi-Fi modules or data loggers.
+
+## Testing
+The project includes a mock Arduino environment in `test_env/` to verify compilation and basic loop execution on non-Arduino systems.
+
+### Running Tests
+To test the files, use the provided Python harness:
+```bash
+python3 test_env/test_harness.py
+```
+
+## Disclaimer
+The code in this repository is experimental. While efforts have been made to consolidate best practices, you should test and debug it yourself on your specific hardware.
 
 First, let me explain the basic idea of how to create Arduino code for a solar powered motion sensor lamp. You will need the following components:
 
