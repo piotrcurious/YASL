@@ -44,25 +44,28 @@ bool usb_state = false; // USB port state (true or false)
 // Define some parameters for USB port control
 #define USB_THRESHOLD 80 // Minimum battery SOC to enable USB port (%)
 
-// Initialize the serial port for communication with Wi-Fi module
-Serial.begin(9600);
 
-// Initialize the pins as input or output
-pinMode(SOLAR_PIN, INPUT);
-pinMode(SOLAR_CURRENT_PIN, INPUT);
-pinMode(BATTERY_PIN, INPUT);
-pinMode(BATTERY_CURRENT_PIN, INPUT);
-pinMode(PWM_PIN, OUTPUT);
-pinMode(BATTERY_PWM_PIN, OUTPUT);
-pinMode(MOTION_PIN, INPUT);
-pinMode(LED_PIN, OUTPUT);
-pinMode(USB_PIN, OUTPUT);
+void setup() {
+  // Initialize the serial port for communication with Wi-Fi module
+  Serial.begin(9600);
 
-// Set the initial states of the pins
-digitalWrite(PWM_PIN, LOW);
-digitalWrite(BATTERY_PWM_PIN, LOW);
-digitalWrite(LED_PIN, LOW);
-digitalWrite(USB_PIN, LOW);
+  // Initialize the pins as input or output
+  pinMode(SOLAR_PIN, INPUT);
+  pinMode(SOLAR_CURRENT_PIN, INPUT);
+  pinMode(BATTERY_PIN, INPUT);
+  pinMode(BATTERY_CURRENT_PIN, INPUT);
+  pinMode(PWM_PIN, OUTPUT);
+  pinMode(BATTERY_PWM_PIN, OUTPUT);
+  pinMode(MOTION_PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(USB_PIN, OUTPUT);
+
+  // Set the initial states of the pins
+  digitalWrite(PWM_PIN, LOW);
+  digitalWrite(BATTERY_PWM_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
+  digitalWrite(USB_PIN, LOW);
+}
 
 void loop() {
   // Measure the solar panel voltage and current
@@ -80,21 +83,26 @@ void loop() {
   battery_soc = (battery_voltage - V_MIN) / (V_MAX - V_MIN) * 100;
 
   // Implement the MPPT algorithm
+  void mppt();
   mppt();
 
   // Implement the battery protection algorithm
+  void battery_protection();
   battery_protection();
 
   // Read the motion sensor state
   motion_state = digitalRead(MOTION_PIN);
 
   // Implement the motion detection algorithm
+  void motion_detection();
   motion_detection();
 
   // Implement the USB port control algorithm
+  void usb_control();
   usb_control();
 
   // Send data in JSON format to Wi-Fi module
+  void send_data();
   send_data();
 
 }

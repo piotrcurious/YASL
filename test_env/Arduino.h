@@ -10,8 +10,8 @@
 #include <map>
 #include <vector>
 #include <stdint.h>
-#include <algorithm>
 #include <sstream>
+#include <queue>
 
 #include "Wire.h"
 
@@ -87,7 +87,6 @@ void analogWrite(int pin, int val);
 
 long map(long x, long in_min, long in_max, long out_min, long out_max);
 
-// Use a macro for constrain to avoid type deduction issues with mixed types
 #define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
 #define max(a,b) ((a)>(b)?(a):(b))
 #define min(a,b) ((a)<(b)?(a):(b))
@@ -96,6 +95,7 @@ long map(long x, long in_min, long in_max, long out_min, long out_max);
 
 // Mock Serial class
 class MockSerial {
+    std::queue<char> rx_buffer;
 public:
     void begin(unsigned long baud) {}
     void print(const std::string& s) { std::cout << s; }
@@ -116,9 +116,35 @@ public:
     void println(long l) { std::cout << l << std::endl; }
     void println(bool b) { std::cout << (b ? "1" : "0") << std::endl; }
     void flush() {}
-    int available() { return 0; }
-    int read() { return -1; }
+    int available() { return rx_buffer.size(); }
+    int read() {
+        if (rx_buffer.empty()) return -1;
+        char c = rx_buffer.front();
+        rx_buffer.pop();
+        return c;
+    }
+    int peek() {
+        if (rx_buffer.empty()) return -1;
+        return rx_buffer.front();
+    }
+    float parseFloat() {
+        std::string s;
+        while(available() && (isspace(peek()) || (!isdigit(peek()) && peek() != '-' && peek() != '.'))) read();
+        while(available() && (isdigit(peek()) || peek() == '-' || peek() == '.')) s += (char)read();
+        try { return std::stof(s); } catch(...) { return 0.0f; }
+    }
+    long parseInt() {
+        std::string s;
+        while(available() && (isspace(peek()) || (!isdigit(peek()) && peek() != '-'))) read();
+        while(available() && (isdigit(peek()) || peek() == '-')) s += (char)read();
+        try { return std::stol(s); } catch(...) { return 0; }
+    }
     operator bool() { return true; }
+
+    // Sim helper
+    void sim_input(const std::string& s) {
+        for (char c : s) rx_buffer.push(c);
+    }
 };
 
 extern MockSerial Serial;

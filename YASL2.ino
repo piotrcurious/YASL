@@ -229,11 +229,6 @@ float findCoilInductance() {
 
 // Function to enter deep sleep mode
 void sleepNow() {
-  // TODO: implement deep sleep mode using watchdog timer or external interrupt
-}
-
-// Function to enter deep sleep mode
-void sleepNow() {
   // use watchdog timer to wake up after a certain time
   WDTCSR = bit(WDCE) | bit(WDE); // enable watchdog change and watchdog system reset
   WDTCSR = bit(WDIE) | bit(WDP2) | bit(WDP1); // enable watchdog interrupt and set prescaler to 1 second

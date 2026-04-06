@@ -1,3 +1,4 @@
+#include <cstdlib>
 
 #include "Arduino.h"
 #include "avr/interrupt.h"
@@ -69,12 +70,13 @@ int digitalRead(int pin) {
 }
 
 int analogRead(int pin) {
+    float noise = ((float)rand() / (float)RAND_MAX - 0.5f) * 0.05f; // +/- 25mV noise
     if (pin == A1) { // Battery divider ratio was 3.0. Vpin = Vbat / 3.0
-        float v_pin = sim.batteryV / 3.0f;
+        float v_pin = (sim.batteryV + noise) / 3.0f;
         return (int)(v_pin * 1023.0f / 5.0f);
     }
     if (pin == A0) { // Solar divider ratio was 4.0
-        float v_pin = sim.solarBusV / 4.0f;
+        float v_pin = (sim.solarBusV + noise) / 4.0f;
         return (int)(v_pin * 1023.0f / 5.0f);
     }
     return 0;

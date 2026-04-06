@@ -19,7 +19,7 @@
 #include <avr/wdt.h>
 #include <avr/power.h>
 #include <avr/interrupt.h>
-#include <Arduino.h>
+#include <EEPROM.h>
 
 // --- Configuration ---
 
@@ -69,8 +69,21 @@ struct SystemState {
     char  chargeMode;   // 'N'ight, 'L'ow solar, 'B'ulk (MPPT), 'C'V (Absorption), 'X' Overvoltage
 };
 
+// Permanent Configuration Struct (EEPROM)
+struct Config {
+    uint32_t magic;         // Validation token
+    float    batMaxV;
+    float    batMinV;
+    int      ledMaxPWM;
+    int      ledDimPWM;
+    long     motionTimeout;
+};
+
+const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
+
 // Global State
 volatile SystemState sys = {0,0,0,0,0,true,false,0,0,'N'};
+Config config;
 bool ina219_present = false;
 int motion_intensity = 0; // Cumulative motion tracker for adaptive brightness
 
@@ -88,6 +101,8 @@ volatile bool wakePIR = false;
 volatile bool wakeWDT = false;
 
 // --- Prototypes ---
+void loadConfig();
+void saveConfig();
 void readSensors();
 void updateMPPT();
 void updateLight();
@@ -115,6 +130,9 @@ ISR(WDT_vect) {
 // --- Arduino Core ---
 
 void setup() {
+    // 0. Load Configuration
+    loadConfig();
+
     // Immediate safe states
     pinMode(PIN_MPPT_PWM, OUTPUT);
     digitalWrite(PIN_MPPT_PWM, LOW);
@@ -143,6 +161,23 @@ void setup() {
 
     disableWDT();
     readSensors();
+}
+
+void checkAndInitiateSleep() {
+    bool shouldSleep = false;
+
+    if (sys.batPcnt < 40.0f && sys.isDark) {
+        shouldSleep = true;
+        Serial.println(F("Low battery, initiating timed sleep."));
+    } else if (sys.isDark && sys.ledPWM <= config.ledDimPWM && !sys.isMotion &&
+               (millis() - motionStart > 300000UL)) {
+        shouldSleep = true;
+        Serial.println(F("Dark and idle, initiating timed sleep."));
+    }
+
+    if (shouldSleep) {
+        sleepSystem();
+    }
 }
 
 void loop() {
@@ -208,20 +243,68 @@ void loop() {
         lastLog = now;
     }
 
-    // --- Command Processing (Simple Diagnostic Stub) ---
+    // --- Command Processing ---
     if (Serial.available() > 0) {
         char cmd = Serial.read();
-        if (cmd == 'd') { // Dump system state info
+        if (cmd == 'd') { // Diagnostics
             Serial.println(F("--- DIAGNOSTICS ---"));
             Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
             Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
+            Serial.print(F("Mode: ")); Serial.println(sys.chargeMode);
+        }
+        else if (cmd == 'c') { // View Config
+            Serial.println(F("--- CONFIG ---"));
+            Serial.print(F("BatMax: ")); Serial.println(config.batMaxV);
+            Serial.print(F("BatMin: ")); Serial.println(config.batMinV);
+            Serial.print(F("LEDMax: ")); Serial.println(config.ledMaxPWM);
+            Serial.print(F("Timeout: ")); Serial.println(config.motionTimeout);
+        }
+        else if (cmd == 'm') { // Manual Light Toggle
+            sys.isMotion = !sys.isMotion;
+            motionStart = now;
+            Serial.print(F("Manual Motion: ")); Serial.println(sys.isMotion);
+        }
+        else if (cmd == 's') { // Set Param
+            char param = Serial.read();
+            if (param == 'M') { config.batMaxV = Serial.parseFloat(); }
+            else if (param == 'm') { config.batMinV = Serial.parseFloat(); }
+            else if (param == 'T') { config.motionTimeout = Serial.parseInt(); }
+            saveConfig();
+            Serial.println(F("Param Saved"));
+        }
+        else if (cmd == 'r') { // Reset Defaults
+            config.magic = 0;
+            loadConfig();
+            Serial.println(F("Config Reset"));
         }
     }
 
+    checkAndInitiateSleep();
     delay(50); // Loop stability
 }
 
 // --- Support Functions ---
+
+void loadConfig() {
+    EEPROM.get(0, config);
+    if (config.magic != MAGIC_TOKEN) {
+        // Factory Defaults
+        config.magic = MAGIC_TOKEN;
+        config.batMaxV = BAT_MAX_V;
+        config.batMinV = BAT_MIN_V;
+        config.ledMaxPWM = PWM_LED_MAX;
+        config.ledDimPWM = PWM_LED_DIM;
+        config.motionTimeout = MOTION_ON_MS;
+        saveConfig();
+        Serial.println(F("EEPROM: Using Defaults"));
+    } else {
+        Serial.println(F("EEPROM: Loaded Config"));
+    }
+}
+
+void saveConfig() {
+    EEPROM.put(0, config);
+}
 
 void readSensors() {
     if (ina219_present) {
@@ -242,7 +325,7 @@ void readSensors() {
     // Bat ADC (Averaged)
     float raw = getSmoothedADC(PIN_BAT_ADC);
     sys.batV = raw * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
-    sys.batPcnt = constrain(mapFloat(sys.batV, BAT_MIN_V, BAT_MAX_V, 0, 100), 0, 100);
+    sys.batPcnt = constrain(mapFloat(sys.batV, config.batMinV, config.batMaxV, 0, 100), 0, 100);
 }
 
 float getSmoothedADC(uint8_t pin) {
@@ -256,7 +339,7 @@ float getSmoothedADC(uint8_t pin) {
 void updateMPPT() {
     // If INA219 is missing, we can only do very basic charging (not MPPT)
     if (!ina219_present) {
-        if (sys.solarV > sys.batV + 1.0f && sys.batV < BAT_MAX_V) {
+        if (sys.solarV > sys.batV + 1.0f && sys.batV < config.batMaxV) {
             sys.mpptPWM = PWM_MPPT_MAX; // full on if simple charging
             sys.chargeMode = 'S'; // Simple
         } else {
@@ -268,7 +351,7 @@ void updateMPPT() {
     }
 
     // Overvoltage Protection
-    if (sys.batV > BAT_MAX_V + 0.1f) {
+    if (sys.batV > config.batMaxV + 0.1f) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'X';
     }
@@ -276,7 +359,7 @@ void updateMPPT() {
         sys.mpptPWM = 0;
         sys.chargeMode = 'L';
     }
-    else if (sys.batV >= BAT_MAX_V) {
+    else if (sys.batV >= config.batMaxV) {
         // CV Mode: Reduce PWM to maintain voltage
         sys.chargeMode = 'C';
         if (sys.mpptPWM > 0) sys.mpptPWM--;
@@ -306,21 +389,21 @@ void updateLight() {
     unsigned long now = millis();
 
     // Low Voltage Disconnect
-    if (sys.batV < BAT_MIN_V) {
+    if (sys.batV < config.batMinV) {
         sys.ledPWM = PWM_LED_OFF;
         motion_intensity = 0;
     }
     else if (sys.isMotion) {
-        if (now - motionStart < MOTION_ON_MS) {
+        if (now - motionStart < config.motionTimeout) {
             // Adaptive Brightness: more motion = higher brightness (if battery allows)
             // motion_intensity caps at 5, scaling brightness between DIM and MAX
-            int adaptive_max = map(constrain(motion_intensity, 1, 5), 1, 5, (PWM_LED_MAX/2), PWM_LED_MAX);
+            int adaptive_max = map(constrain(motion_intensity, 1, 5), 1, 5, (config.ledMaxPWM/2), config.ledMaxPWM);
 
             // Battery scaling (original logic)
-            int bat_limit = map(constrain(sys.batV * 100, BAT_MIN_V * 100, BAT_MAX_V * 100),
-                                BAT_MIN_V * 100, BAT_MAX_V * 100, PWM_LED_DIM, adaptive_max);
+            int bat_limit = map(constrain(sys.batV * 100, config.batMinV * 100, config.batMaxV * 100),
+                                config.batMinV * 100, config.batMaxV * 100, config.ledDimPWM, adaptive_max);
 
-            sys.ledPWM = constrain(bat_limit, PWM_LED_DIM, PWM_LED_MAX);
+            sys.ledPWM = constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
 
             // Re-read PIR in loop to maintain intensity if active
             if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > 1000)) {
@@ -330,10 +413,10 @@ void updateLight() {
         } else {
             sys.isMotion = false;
             motion_intensity = 0;
-            sys.ledPWM = PWM_LED_DIM;
+            sys.ledPWM = config.ledDimPWM;
         }
     } else {
-        sys.ledPWM = PWM_LED_DIM;
+        sys.ledPWM = config.ledDimPWM;
         motion_intensity = 0;
     }
 
