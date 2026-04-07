@@ -62,6 +62,8 @@ struct SystemState {
     float solarP;       // mW
     float batV;         // ADC averaged
     float batPcnt;      // 0-100%
+    float batMaxToday;
+    float batMinToday;
     bool  isDark;
     bool  isMotion;
     int   ledPWM;
@@ -72,8 +74,9 @@ struct SystemState {
 // Permanent Configuration Struct (EEPROM)
 struct Config {
     uint32_t magic;         // Validation token
-    float    batMaxV;
-    float    batMinV;
+    float    batMaxV;       // Absorption voltage (CV)
+    float    batMinV;       // Low Voltage Disconnect
+    float    batFloatV;     // Float voltage
     int      ledMaxPWM;
     int      ledDimPWM;
     long     motionTimeout;
@@ -82,8 +85,9 @@ struct Config {
 const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
 
 // Global State
-volatile SystemState sys = {0,0,0,0,0,true,false,0,0,'N'};
+volatile SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N'};
 Config config;
+float current_led_val = 0;
 bool ina219_present = false;
 int motion_intensity = 0; // Cumulative motion tracker for adaptive brightness
 bool manual_override = false;
@@ -143,11 +147,11 @@ void setup() {
     pinMode(PIN_LED_PWM, OUTPUT);
     digitalWrite(PIN_LED_PWM, LOW);
 
-    pinMode(PIN_PIR, INPUT_PULLUP); // Common for PIR sensors
+    pinMode(PIN_PIR, INPUT_PULLUP);
 
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v1.0 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v1.1 INIT"));
 
     if (!ina219.begin()) {
         Serial.println(F("ERR: INA219 FAILED - Using fallback ADC"));
@@ -157,11 +161,15 @@ void setup() {
         ina219_present = true;
     }
 
+    // --- High Frequency 10-bit PWM for MPPT (Timer1) ---
+    // Pin 9 (OC1A)
+    TCCR1A = _BV(COM1A1) | _BV(WGM11); // Fast PWM, non-inverting, mode 14
+    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10); // mode 14, no prescaler
+    ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
+    OCR1A = 0;
+
     // Set Timer2 (pins 3, 11) for ~976Hz PWM
     TCCR2B = (TCCR2B & 0b11111000) | 0x04;
-
-    // Set Timer1 (pins 9, 10) for ~490Hz PWM (default) or custom
-    // TCCR1B = (TCCR1B & 0b11111000) | 0x03; // ~490Hz (div 64)
 
     disableWDT();
     readSensors();
@@ -256,7 +264,11 @@ void loop() {
 
     // --- Command Processing ---
     if (Serial.available() > 0) {
-        char cmd = Serial.read();
+        String line = Serial.readStringUntil('\n');
+        line.trim();
+        if (line.length() == 0) return;
+
+        char cmd = line[0];
         if (cmd == 'd') { // Diagnostics
             Serial.println(F("--- DIAGNOSTICS ---"));
             Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
@@ -282,13 +294,17 @@ void loop() {
             manual_override_start = now;
             Serial.print(F("Manual Override: ")); Serial.println(manual_override);
         }
-        else if (cmd == 's') { // Set Param
-            char param = Serial.read();
-            if (param == 'M') { config.batMaxV = Serial.parseFloat(); }
-            else if (param == 'm') { config.batMinV = Serial.parseFloat(); }
-            else if (param == 'T') { config.motionTimeout = Serial.parseInt(); }
+        else if (cmd == 's') { // Set Param (e.g. sM 4.2)
+            char param = line[1];
+            float val = line.substring(2).toFloat();
+            if (param == 'M') { config.batMaxV = val; }
+            else if (param == 'm') { config.batMinV = val; }
+            else if (param == 'F') { config.batFloatV = val; }
+            else if (param == 'T') { config.motionTimeout = (long)val; }
+            else if (param == 'X') { config.ledMaxPWM = (int)val; }
+            else if (param == 'D') { config.ledDimPWM = (int)val; }
             saveConfig();
-            Serial.println(F("Param Saved"));
+            Serial.print(F("Param ")); Serial.print(param); Serial.println(F(" Saved"));
         }
         else if (cmd == 'v') { // View Stats (Sim only)
             #ifdef SIMULATION
@@ -303,9 +319,9 @@ void loop() {
         }
         else if (cmd == 'h' || cmd == '?') {
             Serial.println(F("--- HELP ---"));
-            Serial.println(F("d: Diag, c: Config, m: Toggle Override"));
-            Serial.println(F("sM [val]: Set BatMax, sm [val]: Set BatMin"));
-            Serial.println(F("sT [ms]: Set Timeout, r: Reset Defaults"));
+            Serial.println(F("d: Diag, c: Config, m: Toggle Override, v: Stats"));
+            Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
+            Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
         }
     }
 
@@ -322,6 +338,7 @@ void loadConfig() {
         config.magic = MAGIC_TOKEN;
         config.batMaxV = BAT_MAX_V;
         config.batMinV = BAT_MIN_V;
+        config.batFloatV = 3.45f; // Standard LiFePO4/Li-ion float
         config.ledMaxPWM = PWM_LED_MAX;
         config.ledDimPWM = PWM_LED_DIM;
         config.motionTimeout = MOTION_ON_MS;
@@ -356,6 +373,10 @@ void readSensors() {
     float raw = getSmoothedADC(PIN_BAT_ADC);
     sys.batV = raw * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
     sys.batPcnt = constrain(mapFloat(sys.batV, config.batMinV, config.batMaxV, 0, 100), 0, 100);
+
+    // Update Daily Stats
+    if (sys.batV > sys.batMaxToday) sys.batMaxToday = sys.batV;
+    if (sys.batV < sys.batMinToday || sys.batMinToday == 0) sys.batMinToday = sys.batV;
 }
 
 float getSmoothedADC(uint8_t pin) {
@@ -367,72 +388,100 @@ float getSmoothedADC(uint8_t pin) {
 }
 
 void updateMPPT() {
-    // If INA219 is missing, we can only do very basic charging (not MPPT)
-    if (!ina219_present) {
-        if (sys.solarV > sys.batV + 1.0f && sys.batV < config.batMaxV) {
-            sys.mpptPWM = PWM_MPPT_MAX; // full on if simple charging
-            sys.chargeMode = 'S'; // Simple
-        } else {
-            sys.mpptPWM = 0;
-            sys.chargeMode = 'L';
-        }
-        analogWrite(PIN_MPPT_PWM, sys.mpptPWM);
+    static char stage = 'B'; // Default to Bulk
+
+    // Safety & Night check
+    if (sys.solarV < SOLAR_START_V || sys.isDark) {
+        sys.mpptPWM = 0;
+        sys.chargeMode = 'N';
+        stage = 'B';
+        analogWrite(PIN_MPPT_PWM, 0);
         return;
     }
 
     // Overvoltage Protection
-    if (sys.batV > config.batMaxV + 0.1f) {
+    if (sys.batV > config.batMaxV + 0.2f) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'X';
+        analogWrite(PIN_MPPT_PWM, 0);
+        return;
     }
-    else if (sys.solarV < SOLAR_START_V) {
-        sys.mpptPWM = 0;
-        sys.chargeMode = 'L';
-    }
-    else if (sys.batV >= config.batMaxV) {
-        // CV Mode: Reduce PWM to maintain voltage
-        sys.chargeMode = 'C';
-        if (sys.mpptPWM > 0) sys.mpptPWM--;
-    }
-    else {
-        // Bulk MPPT Mode (Sliding Mode Control)
+
+    // 3-Stage Logic
+    if (stage == 'B') { // Bulk (MPPT)
         sys.chargeMode = 'B';
-        unsigned long now = millis();
-        if (now - lastMppt > MPPT_INTERVAL_MS) {
-            float dv = sys.solarV - prevSolarV;
-            float dp = sys.solarP - prevSolarP;
-
-            if (abs(dv) > 0.01f) {
-                float S = dp / dv; // Sliding Surface S = dP/dV
-
-                // SMC Control Law
-                if (S > 0.01f) {
-                    // Left of MPP: increase V (decrease load/duty)
-                    sys.mpptPWM -= SMC_GAIN;
-                } else if (S < -0.01f) {
-                    // Right of MPP: decrease V (increase load/duty)
-                    sys.mpptPWM += SMC_GAIN;
-                } else {
-                    // Very close to MPP, stay put or small jitter
-                }
-
-                prevSolarV = sys.solarV;
-                prevSolarP = sys.solarP;
-            } else {
-                // If not moving, force a small perturbation to find gradient
-                sys.mpptPWM += SMC_GAIN;
-            }
-
-            lastMppt = now;
+        if (sys.batV >= config.batMaxV) {
+            stage = 'A'; // To Absorption
+        } else {
+            runSMCMPPT();
         }
     }
+    else if (stage == 'A') { // Absorption (CV)
+        sys.chargeMode = 'A';
+        // Maintain config.batMaxV
+        if (sys.batV > config.batMaxV) {
+            if (sys.mpptPWM > 0) sys.mpptPWM--;
+        } else if (sys.batV < config.batMaxV - 0.02f) {
+            if (sys.mpptPWM < 1000) sys.mpptPWM++;
+        }
 
-    sys.mpptPWM = constrain(sys.mpptPWM, PWM_MPPT_MIN, PWM_MPPT_MAX);
-    analogWrite(PIN_MPPT_PWM, sys.mpptPWM);
+        // Transition to Float after current drops (Tail Current) or timeout
+        static unsigned long absorption_start = 0;
+        if (absorption_start == 0) absorption_start = millis();
+
+        bool tail_current_reached = (ina219_present && sys.solarI < 50.0f && sys.solarI > 0);
+        bool timeout_reached = (millis() - absorption_start > 7200000UL); // 2 hours max
+
+        if (tail_current_reached || timeout_reached) {
+            stage = 'F';
+            absorption_start = 0;
+        }
+        if (sys.batV < config.batMinV + 0.2f) stage = 'B'; // Deep discharge
+    }
+    else if (stage == 'F') { // Float
+        sys.chargeMode = 'F';
+        if (sys.batV > config.batFloatV) {
+            if (sys.mpptPWM > 0) sys.mpptPWM--;
+        } else if (sys.batV < config.batFloatV - 0.05f) {
+            if (sys.mpptPWM < PWM_MPPT_MAX) sys.mpptPWM++;
+        }
+        if (sys.batV < config.batFloatV - 0.3f) stage = 'B'; // Re-bulk
+    }
+
+    // MPPT PWM is now 10-bit (0-1023)
+    sys.mpptPWM = constrain(sys.mpptPWM, 0, 1000); // Leave some margin
+    OCR1A = sys.mpptPWM;
+}
+
+void runSMCMPPT() {
+    if (!ina219_present) {
+        sys.mpptPWM = PWM_MPPT_MAX; // Full on if no sensors
+        sys.chargeMode = 'S';
+        return;
+    }
+
+    unsigned long now = millis();
+    if (now - lastMppt > MPPT_INTERVAL_MS) {
+        float dv = sys.solarV - prevSolarV;
+        float dp = sys.solarP - prevSolarP;
+
+        if (abs(dv) > 0.01f) {
+            float S = dp / dv;
+            // Scale gain for 10-bit resolution (SMC_GAIN * 4)
+            if (S > 0.01f) sys.mpptPWM -= (SMC_GAIN * 4);
+            else if (S < -0.01f) sys.mpptPWM += (SMC_GAIN * 4);
+
+            prevSolarV = sys.solarV;
+            prevSolarP = sys.solarP;
+        } else {
+            sys.mpptPWM += SMC_GAIN;
+        }
+        lastMppt = now;
+    }
 }
 
 void updateLight() {
-    static int currentLED = 0;
+    static unsigned long last_fade = 0;
     static unsigned long last_motion_check = 0;
     static bool lvd_active = false;
     unsigned long now = millis();
@@ -454,17 +503,12 @@ void updateLight() {
     }
     else if (sys.isMotion) {
         if (now - motionStart < config.motionTimeout) {
-            // Adaptive Brightness: more motion = higher brightness (if battery allows)
-            // motion_intensity caps at 5, scaling brightness between DIM and MAX
+            // Adaptive Brightness
             int adaptive_max = map(constrain(motion_intensity, 1, 5), 1, 5, (config.ledMaxPWM/2), config.ledMaxPWM);
-
-            // Battery scaling (original logic)
             int bat_limit = map(constrain(sys.batV * 100, config.batMinV * 100, config.batMaxV * 100),
                                 config.batMinV * 100, config.batMaxV * 100, config.ledDimPWM, adaptive_max);
-
             sys.ledPWM = constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
 
-            // Re-read PIR in loop to maintain intensity if active
             if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > 1000)) {
                 motion_intensity = constrain(motion_intensity + 1, 0, 10);
                 last_motion_check = now;
@@ -479,11 +523,13 @@ void updateLight() {
         motion_intensity = 0;
     }
 
-    // Smooth PWM transition
-    if (currentLED < sys.ledPWM) currentLED++;
-    else if (currentLED > sys.ledPWM) currentLED--;
-
-    analogWrite(PIN_LED_PWM, currentLED);
+    // Smooth time-based PWM transition (independent of loop rate)
+    if (now - last_fade > 10) { // Update every 10ms
+        if (current_led_val < sys.ledPWM) current_led_val += 1.0;
+        else if (current_led_val > sys.ledPWM) current_led_val -= 1.0;
+        analogWrite(PIN_LED_PWM, (int)current_led_val);
+        last_fade = now;
+    }
 }
 
 void sleepSystem() {
@@ -492,7 +538,7 @@ void sleepSystem() {
 
     // Kill outputs
     analogWrite(PIN_LED_PWM, 0);
-    analogWrite(PIN_MPPT_PWM, 0);
+    OCR1A = 0; // MPPT 10-bit PWM off
 
     // Peripheral Shutdown
     ADCSRA &= ~(1 << ADEN); // ADC off
