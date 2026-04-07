@@ -92,15 +92,26 @@ void analogWrite(int pin, int val) {
         sim.systemCurrentMA = 10.0f + (val / 255.0f) * 500.0f;
     }
     if (pin == 9) { // MPPT Buck Converter
-        // Simple Solar Model: I = Isc * (1 - exp(V - Voc))
-        // Here we'll just simulate a resistive drop for simplicity in this turn
-        // Higher duty cycle (val) -> Lower Bus Voltage (more load on panel)
-        float load_factor = (float)val / 255.0f;
-        sim.solarBusV = sim.solarOCV - (load_factor * 5.0f);
-        if (sim.solarBusV < 0) sim.solarBusV = 0;
+        // Improved Solar Model: P-V Curve Simulation
+        // MPP is usually around 0.8 * Voc. Let's assume Voc=20V, Vmpp=16V.
+        // Power curve: P = G * (1 - ((V - Vmpp)/(Voc - Vmpp))^2) * Pmpp
+        // For simulation, we control V via PWM duty. Higher duty -> more load -> lower V.
+        float duty = (float)val / 255.0f;
+        sim.solarBusV = sim.solarOCV * (1.0f - duty * 0.8f); // Duty 1.0 -> V = 4V
 
-        // I = V/R style current
-        sim.solarCurrentMA = load_factor * 1000.0f * (sim.solarBusV / sim.solarOCV);
+        float Vmpp = sim.solarOCV * 0.8f;
+        float diff = (sim.solarBusV - Vmpp) / (sim.solarOCV - Vmpp);
+        float power_factor = 1.0f - (diff * diff);
+        if (power_factor < 0) power_factor = 0;
+
+        float max_p_mw = 50000.0f; // 50W
+        float p_mw = power_factor * max_p_mw;
+
+        if (sim.solarBusV > 0.1f) {
+            sim.solarCurrentMA = p_mw / sim.solarBusV;
+        } else {
+            sim.solarCurrentMA = 0;
+        }
     }
 }
 

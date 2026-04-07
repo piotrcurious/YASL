@@ -34,10 +34,10 @@ int main() {
 
     // Scenario 1: DAY (Charging)
     std::cout << "\\n[SCENARIO] DAY - Charging test" << std::endl;
-    sim.solarBusV = 18.0f;
+    sim.solarOCV = 20.0f;
     sim.batteryV = 3.5f;
     sim.motion = false;
-    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
+    for(int i = 0; i < 50; ++i) { loop(); update_sim(); }
 
     // Scenario 2: NIGHT (Motion)
     std::cout << "\\n[SCENARIO] NIGHT - Motion detection test" << std::endl;
@@ -82,12 +82,24 @@ int main() {
 
     std::cout << "[SIM] Updating parameter (Timeout -> 60000ms)" << std::endl;
     Serial.sim_input("sT60000");
-    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
+    for(int i = 0; i < 50; ++i) { loop(); update_sim(); } // Give it more time to track MPPT
 
     std::cout << "[SIM] Soft Reset (calling setup)" << std::endl;
     setup();
     Serial.sim_input("c"); // Verify config
     for(int i = 0; i < 5; ++i) { loop(); update_sim(); }
+
+    // Scenario 7: Override Timeout
+    std::cout << "\\n[SCENARIO] OVERRIDE - Timeout test" << std::endl;
+    sim.solarBusV = 0.5f; // Night
+    Serial.sim_input("m"); // Override ON
+    loop(); // Process 'm'
+    std::cout << "[SIM] Override state after command: " << (int)sys.isMotion << std::endl;
+
+    // Jump time forward 6 minutes
+    for(int i = 0; i < 3600; ++i) { update_sim(); }
+    loop(); // Process timeout
+    std::cout << "[SIM] Override state after 6 mins: " << (int)sys.isMotion << std::endl;
 
     return 0;
 }

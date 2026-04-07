@@ -90,10 +90,10 @@ bool manual_override = false;
 unsigned long manual_override_start = 0;
 const unsigned long OVERRIDE_TIMEOUT = 300000; // 5 minutes
 
-// MPPT Trackers
+// MPPT Trackers (Sliding Mode Control)
+float prevSolarV = 0.0f;
 float prevSolarP = 0.0f;
-bool  mpptUp = true;
-const float MPPT_DEADBAND_MW = 5.0f; // Ignore changes smaller than this
+const float SMC_GAIN = 2.0f;
 
 // Timers
 unsigned long lastLog = 0;
@@ -395,17 +395,32 @@ void updateMPPT() {
         if (sys.mpptPWM > 0) sys.mpptPWM--;
     }
     else {
-        // Bulk MPPT Mode
+        // Bulk MPPT Mode (Sliding Mode Control)
         sys.chargeMode = 'B';
         unsigned long now = millis();
         if (now - lastMppt > MPPT_INTERVAL_MS) {
-            float deltaP = sys.solarP - prevSolarP;
+            float dv = sys.solarV - prevSolarV;
+            float dp = sys.solarP - prevSolarP;
 
-            // Apply deadband
-            if (abs(deltaP) > MPPT_DEADBAND_MW) {
-                if (deltaP < 0) mpptUp = !mpptUp;
-                if (mpptUp) sys.mpptPWM++; else sys.mpptPWM--;
+            if (abs(dv) > 0.01f) {
+                float S = dp / dv; // Sliding Surface S = dP/dV
+
+                // SMC Control Law
+                if (S > 0.01f) {
+                    // Left of MPP: increase V (decrease load/duty)
+                    sys.mpptPWM -= SMC_GAIN;
+                } else if (S < -0.01f) {
+                    // Right of MPP: decrease V (increase load/duty)
+                    sys.mpptPWM += SMC_GAIN;
+                } else {
+                    // Very close to MPP, stay put or small jitter
+                }
+
+                prevSolarV = sys.solarV;
                 prevSolarP = sys.solarP;
+            } else {
+                // If not moving, force a small perturbation to find gradient
+                sys.mpptPWM += SMC_GAIN;
             }
 
             lastMppt = now;
