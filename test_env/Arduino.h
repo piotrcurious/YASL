@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <sstream>
 #include <queue>
+#include <algorithm>
 
 #include "Wire.h"
 
@@ -36,6 +37,17 @@ typedef bool boolean;
 
 // AVR Registers / Bits for compatibility
 extern int TCCR2B;
+extern int TCCR1A;
+extern int TCCR1B;
+extern int ICR1;
+extern int OCR1A;
+#define _BV(bit) (1 << (bit))
+#define COM1A1 7
+#define WGM11 1
+#define WGM12 3
+#define WGM13 4
+#define CS10 0
+
 extern int MCUSR;
 extern int WDRF;
 extern int EIMSK;
@@ -95,6 +107,58 @@ long map(long x, long in_min, long in_max, long out_min, long out_max);
 
 #define SIMULATION 1
 
+// String class mock (Move up so MockSerial can use it)
+class String : public std::string {
+public:
+    String(const char* s = "") : std::string(s) {}
+    String(const std::string& s) : std::string(s) {}
+    String(int i) {
+        std::stringstream ss;
+        ss << i;
+        *this = ss.str();
+    }
+    String(float f) {
+        std::stringstream ss;
+        ss << f;
+        *this = ss.str();
+    }
+    String(double d) {
+        std::stringstream ss;
+        ss << d;
+        *this = ss.str();
+    }
+    String(long l) {
+        std::stringstream ss;
+        ss << l;
+        *this = ss.str();
+    }
+    String(bool b) {
+        *this = b ? "1" : "0";
+    }
+    String& operator+=(const String& other) {
+        this->std::string::append(other);
+        return *this;
+    }
+    String& operator+=(const char* s) {
+        this->std::string::append(s);
+        return *this;
+    }
+    float toFloat() const {
+        try { return std::stof(*this); } catch(...) { return 0.0f; }
+    }
+    String substring(int from) const {
+        if (from >= (int)length()) return "";
+        return String(this->substr(from));
+    }
+    void trim() {
+        auto it1 = std::find_if(begin(), end(), [](char c) { return !isspace(c); });
+        auto it2 = std::find_if(rbegin(), rend(), [](char c) { return !isspace(c); });
+        if (it1 == end()) erase(begin(), end());
+        else erase(it2.base(), end()), erase(begin(), it1);
+    }
+    char operator[](int i) const { return std::string::operator[](i); }
+};
+
 // Mock Serial class
 class MockSerial {
     std::queue<char> rx_buffer;
@@ -149,47 +213,18 @@ public:
     void sim_input(const std::string& s) {
         for (char c : s) rx_buffer.push(c);
     }
+    String readStringUntil(char terminator) {
+        String res = "";
+        while(available()) {
+            char c = read();
+            if (c == terminator) break;
+            res += c;
+        }
+        return res;
+    }
 };
 
 extern MockSerial Serial;
-
-// String class mock
-class String : public std::string {
-public:
-    String(const char* s = "") : std::string(s) {}
-    String(const std::string& s) : std::string(s) {}
-    String(int i) {
-        std::stringstream ss;
-        ss << i;
-        *this = ss.str();
-    }
-    String(float f) {
-        std::stringstream ss;
-        ss << f;
-        *this = ss.str();
-    }
-    String(double d) {
-        std::stringstream ss;
-        ss << d;
-        *this = ss.str();
-    }
-    String(long l) {
-        std::stringstream ss;
-        ss << l;
-        *this = ss.str();
-    }
-    String(bool b) {
-        *this = b ? "1" : "0";
-    }
-    String& operator+=(const String& other) {
-        this->std::string::append(other);
-        return *this;
-    }
-    String& operator+=(const char* s) {
-        this->std::string::append(s);
-        return *this;
-    }
-};
 
 inline String operator+(const String& a, const String& b) {
     String res = a;
@@ -208,6 +243,11 @@ inline String operator+(const char* a, const String& b) {
 }
 
 // --- Simulation Extensions ---
+struct SimStats {
+    double harvestedMAH;
+    double consumedMAH;
+};
+
 struct SimSensors {
     float solarBusV;
     float solarOCV; // Open Circuit Voltage

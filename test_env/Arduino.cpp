@@ -5,6 +5,10 @@
 #include "EEPROM.h"
 
 int TCCR2B = 0;
+int TCCR1A = 0;
+int TCCR1B = 0;
+int ICR1 = 0;
+int OCR1A = 0;
 int WDTCSR = 0;
 int MCUSR = 0;
 int WDRF = 3; // ATmega328P bit 3
@@ -41,6 +45,24 @@ unsigned long millis() {
 }
 
 void update_sim() {
+    // Simulated physics for MPPT via OCR1A (10-bit)
+    float duty = (float)OCR1A / 1023.0f;
+
+    // Improved Solar Model (Single-diode approximation)
+    // P = V * (Isc - Io * (exp(V/Vt) - 1))
+    // We simplify to a parabolic P-V curve for MPPT testing robustness
+    sim.solarBusV = sim.solarOCV * (1.0f - duty * 0.9f);
+    if (sim.solarBusV < 0.1f) sim.solarBusV = 0.1f;
+
+    float Vmpp = sim.solarOCV * 0.8f;
+    // Power factor is 1.0 at Vmpp, falls to 0 at Voc and 0.
+    float normV = sim.solarBusV / sim.solarOCV;
+    float power_factor = 1.0f - pow((sim.solarBusV - Vmpp) / (0.8f * sim.solarOCV), 2);
+    if (power_factor < 0) power_factor = 0;
+
+    float max_p_mw = 50000.0f;
+    sim.solarCurrentMA = (power_factor * max_p_mw) / sim.solarBusV;
+
     float chargeAH = sim.batteryCapAH * (sim.batteryV - 3.0f) / (4.2f - 3.0f);
     unsigned long step_ms = 100;
     current_time_ms += step_ms;
@@ -52,6 +74,10 @@ void update_sim() {
     // Stats
     if (sim.solarCurrentMA > 0) sim.harvestedMAH += (sim.solarCurrentMA) * (step_ms / 3600000.0);
     sim.consumedMAH += (sim.systemCurrentMA) * (step_ms / 3600000.0);
+
+    // Persist stats in "EEPROM" (offset 512)
+    SimStats stats = { sim.harvestedMAH, sim.consumedMAH };
+    EEPROM.put(512, stats);
 
     chargeAH += deltaAH;
     if (chargeAH < 0) chargeAH = 0;
@@ -90,28 +116,6 @@ void analogWrite(int pin, int val) {
     if (pin == 3) { // LED
         // Assume LED at 100% takes 500mA
         sim.systemCurrentMA = 10.0f + (val / 255.0f) * 500.0f;
-    }
-    if (pin == 9) { // MPPT Buck Converter
-        // Improved Solar Model: P-V Curve Simulation
-        // MPP is usually around 0.8 * Voc. Let's assume Voc=20V, Vmpp=16V.
-        // Power curve: P = G * (1 - ((V - Vmpp)/(Voc - Vmpp))^2) * Pmpp
-        // For simulation, we control V via PWM duty. Higher duty -> more load -> lower V.
-        float duty = (float)val / 255.0f;
-        sim.solarBusV = sim.solarOCV * (1.0f - duty * 0.8f); // Duty 1.0 -> V = 4V
-
-        float Vmpp = sim.solarOCV * 0.8f;
-        float diff = (sim.solarBusV - Vmpp) / (sim.solarOCV - Vmpp);
-        float power_factor = 1.0f - (diff * diff);
-        if (power_factor < 0) power_factor = 0;
-
-        float max_p_mw = 50000.0f; // 50W
-        float p_mw = power_factor * max_p_mw;
-
-        if (sim.solarBusV > 0.1f) {
-            sim.solarCurrentMA = p_mw / sim.solarBusV;
-        } else {
-            sim.solarCurrentMA = 0;
-        }
     }
 }
 

@@ -22,6 +22,10 @@ def run_scenario(ino_path):
     # Custom simulation main with assertions/checks
     simulation_main = """
 int main() {
+    // Simulated EEPROM persistence for sim stats
+    SimStats stats = {0,0};
+    EEPROM.put(512, stats);
+
     setup();
 
     // Helper to check for motion and trigger ISR
@@ -77,12 +81,12 @@ int main() {
 
     // Scenario 6: Serial Commands & persistence
     std::cout << "\\n[SCENARIO] INTERACTIVE - Serial commands test" << std::endl;
-    Serial.sim_input("dcm"); // Diagnostics, Config, Manual Motion
-    for(int i = 0; i < 5; ++i) { loop(); update_sim(); }
+    Serial.sim_input("d\\nc\\nm\\n"); // Diagnostics, Config, Manual Motion
+    for(int i = 0; i < 15; ++i) { loop(); update_sim(); }
 
     std::cout << "[SIM] Updating parameter (Timeout -> 60000ms)" << std::endl;
-    Serial.sim_input("sT60000");
-    for(int i = 0; i < 50; ++i) { loop(); update_sim(); } // Give it more time to track MPPT
+    Serial.sim_input("sT60000\\n");
+    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
 
     std::cout << "[SIM] Soft Reset (calling setup)" << std::endl;
     setup();
