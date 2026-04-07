@@ -45,30 +45,42 @@ unsigned long millis() {
 }
 
 void update_sim() {
-    // Simulated physics for MPPT via OCR1A (10-bit)
+    // Buck Converter Model (Idealized):
+    // V_out = V_in * Duty
+    // I_in = I_out * Duty
+    // In our case, V_out is fixed at Battery Voltage (sim.batteryV).
+    // So V_in (sim.solarBusV) = sim.batteryV / Duty (if Duty > 0)
+
     float duty = (float)OCR1A / 1023.0f;
+    if (duty < 0.01f) {
+        sim.solarBusV = sim.solarOCV;
+        sim.solarCurrentMA = 0;
+    } else {
+        sim.solarBusV = sim.batteryV / duty;
+        if (sim.solarBusV > sim.solarOCV) {
+            sim.solarBusV = sim.solarOCV;
+            sim.solarCurrentMA = 0;
+        } else {
+            // PV Panel Model: simplified diode equation
+            // I = Isc - Io * (exp(V/Vt) - 1)
+            float Isc = 3000.0f; // 3A
+            float Io = 0.001f;
+            float Vt = 2.0f; // Thermal voltage scale
+            float panel_current = Isc - Io * (exp(sim.solarBusV / Vt) - 1.0f);
+            if (panel_current < 0) panel_current = 0;
 
-    // Improved Solar Model (Single-diode approximation)
-    // P = V * (Isc - Io * (exp(V/Vt) - 1))
-    // We simplify to a parabolic P-V curve for MPPT testing robustness
-    sim.solarBusV = sim.solarOCV * (1.0f - duty * 0.9f);
-    if (sim.solarBusV < 0.1f) sim.solarBusV = 0.1f;
-
-    float Vmpp = sim.solarOCV * 0.8f;
-    // Power factor is 1.0 at Vmpp, falls to 0 at Voc and 0.
-    float normV = sim.solarBusV / sim.solarOCV;
-    float power_factor = 1.0f - pow((sim.solarBusV - Vmpp) / (0.8f * sim.solarOCV), 2);
-    if (power_factor < 0) power_factor = 0;
-
-    float max_p_mw = 50000.0f;
-    sim.solarCurrentMA = (power_factor * max_p_mw) / sim.solarBusV;
+            sim.solarCurrentMA = panel_current;
+        }
+    }
 
     float chargeAH = sim.batteryCapAH * (sim.batteryV - 3.0f) / (4.2f - 3.0f);
     unsigned long step_ms = 100;
     current_time_ms += step_ms;
 
     // Net current (Solar in - System out)
-    float netMA = sim.solarCurrentMA - sim.systemCurrentMA;
+    // I_out = I_in / Duty
+    float solarOutMA = (duty > 0.01f) ? (sim.solarCurrentMA / duty) : 0;
+    float netMA = solarOutMA - sim.systemCurrentMA;
     float deltaAH = (netMA / 1000.0f) * (step_ms / 3600000.0f);
 
     // Stats
