@@ -165,6 +165,7 @@ class MockSerial {
 public:
     void begin(unsigned long baud) {}
     void print(const std::string& s) { std::cout << s; }
+    void print(char c) { std::cout << c; }
     void print(const char* s) { std::cout << s; }
     void print(float f) { std::cout << f; }
     void print(float f, int p) { std::cout << f; }

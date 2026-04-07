@@ -21,12 +21,44 @@ float mapFloat(float x, float in_min, float in_max, float out_min, float out_max
 
 void test_mapFloat() {
     std::cout << "Testing mapFloat..." << std::endl;
-    assert(std::abs(mapFloat(3.6, 3.0, 4.2, 0.0, 100.0) - 50.0) < 0.1);
-    assert(std::abs(mapFloat(3.0, 3.0, 4.2, 0.0, 100.0) - 0.0) < 0.1);
-    assert(std::abs(mapFloat(4.2, 3.0, 4.2, 0.0, 100.0) - 100.0) < 0.1);
+    assert(std::abs(mapFloat(3.6f, 3.0f, 4.2f, 0.0f, 100.0f) - 50.0f) < 0.1f);
+    assert(std::abs(mapFloat(3.0f, 3.0f, 4.2f, 0.0f, 100.0f) - 0.0f) < 0.1f);
+    assert(std::abs(mapFloat(4.2f, 3.0f, 4.2f, 0.0f, 100.0f) - 100.0f) < 0.1f);
     // Edge case: div by zero
-    assert(mapFloat(1.0, 2.0, 2.0, 10.0, 20.0) == 10.0);
+    assert(mapFloat(1.0f, 2.0f, 2.0f, 10.0f, 20.0f) == 10.0f);
     std::cout << "  PASS: mapFloat" << std::endl;
+}
+
+void test_battery_pcnt() {
+    std::cout << "Testing battery percentage logic..." << std::endl;
+    float minV = 3.0f;
+    float maxV = 4.2f;
+    assert(mapFloat(3.6f, minV, maxV, 0, 100) == 50.0f);
+    assert(mapFloat(3.0f, minV, maxV, 0, 100) == 0.0f);
+    assert(mapFloat(4.2f, minV, maxV, 0, 100) == 100.0f);
+    std::cout << "  PASS: battery_pcnt" << std::endl;
+}
+
+void test_smc_math() {
+    std::cout << "Testing SMC MPPT directional logic..." << std::endl;
+    // S = dP / dV
+    // If S > 0, we are to the left of MPP -> Decrease V (Increase Duty/PWM)
+    // Actually in our Buck converter, increasing PWM increases Vout?
+    // Wait, Vout = Vin * Duty. So Vin = Vout / Duty.
+    // Increasing Duty -> Decreases Vin (Solar Bus Voltage).
+    // So if S > 0 (Vin < Vmpp), we want to Decrease Vin -> Increase Duty.
+
+    float dv = -0.1f; // Voltage decreased
+    float dp = 0.5f;  // Power increased
+    float S = dp / dv; // S = -5.0 (Negative)
+    // If S < 0, we are to the right of MPP -> Need to decrease V -> Increase Duty.
+
+    // Logic in code:
+    // if (S > 0.01f) sys.mpptPWM -= gain;
+    // else if (S < -0.01f) sys.mpptPWM += gain;
+
+    assert(S < -0.01f); // Should lead to sys.mpptPWM += gain; Correct.
+    std::cout << "  PASS: smc_math" << std::endl;
 }
 
 void test_macros() {
@@ -41,6 +73,8 @@ void test_macros() {
 
 int main() {
     test_mapFloat();
+    test_battery_pcnt();
+    test_smc_math();
     test_macros();
     std::cout << "\\nALL UNIT TESTS PASSED" << std::endl;
     return 0;

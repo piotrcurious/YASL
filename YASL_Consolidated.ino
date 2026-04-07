@@ -89,6 +89,7 @@ volatile SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N'};
 Config config;
 float current_led_val = 0;
 bool ina219_present = false;
+bool last_dark_state = true;
 int motion_intensity = 0; // Cumulative motion tracker for adaptive brightness
 bool manual_override = false;
 unsigned long manual_override_start = 0;
@@ -98,6 +99,7 @@ const unsigned long OVERRIDE_TIMEOUT = 300000; // 5 minutes
 float prevSolarV = 0.0f;
 float prevSolarP = 0.0f;
 const float SMC_GAIN = 2.0f;
+char current_charge_stage = 'B';
 
 // Timers
 unsigned long lastLog = 0;
@@ -214,6 +216,14 @@ void loop() {
     // 3. Logic: Daytime vs Nighttime
     sys.isDark = (sys.solarV < SOLAR_DARK_V);
 
+    // Dawn Detection (Transition from Dark to Light)
+    if (last_dark_state && !sys.isDark) {
+        Serial.println(F("DAWN: Resetting Stats"));
+        sys.batMaxToday = sys.batV;
+        sys.batMinToday = sys.batV;
+    }
+    last_dark_state = sys.isDark;
+
     if (sys.isDark) {
         // --- NIGHT ---
         sys.mpptPWM = 0;
@@ -253,6 +263,8 @@ void loop() {
         Serial.print(F(",\"sP\":")); Serial.print(sys.solarP, 0);
         Serial.print(F(",\"bV\":")); Serial.print(sys.batV, 2);
         Serial.print(F(",\"bP\":")); Serial.print(sys.batPcnt, 0);
+        Serial.print(F(",\"bMax\":")); Serial.print(sys.batMaxToday, 2);
+        Serial.print(F(",\"bMin\":")); Serial.print(sys.batMinToday, 2);
         Serial.print(F(",\"dk\":")); Serial.print(sys.isDark ? "true" : "false");
         Serial.print(F(",\"mot\":")); Serial.print(sys.isMotion ? "true" : "false");
         Serial.print(F(",\"mP\":")); Serial.print(sys.mpptPWM);
@@ -323,6 +335,15 @@ void loop() {
             Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
             Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
         }
+        else if (cmd == 'S') { // Manual Stage Force (for testing)
+            char stage = line[1];
+            if (stage == 'B' || stage == 'A' || stage == 'F') {
+                current_charge_stage = stage;
+                Serial.print(F("Stage forced to: ")); Serial.println(stage);
+            } else {
+                Serial.println(F("Invalid stage. Use B, A, or F."));
+            }
+        }
     }
 
     checkAndInitiateSleep();
@@ -388,13 +409,11 @@ float getSmoothedADC(uint8_t pin) {
 }
 
 void updateMPPT() {
-    static char stage = 'B'; // Default to Bulk
-
     // Safety & Night check
     if (sys.solarV < SOLAR_START_V || sys.isDark) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'N';
-        stage = 'B';
+        current_charge_stage = 'B';
         analogWrite(PIN_MPPT_PWM, 0);
         return;
     }
@@ -408,15 +427,15 @@ void updateMPPT() {
     }
 
     // 3-Stage Logic
-    if (stage == 'B') { // Bulk (MPPT)
+    if (current_charge_stage == 'B') { // Bulk (MPPT)
         sys.chargeMode = 'B';
         if (sys.batV >= config.batMaxV) {
-            stage = 'A'; // To Absorption
+            current_charge_stage = 'A'; // To Absorption
         } else {
             runSMCMPPT();
         }
     }
-    else if (stage == 'A') { // Absorption (CV)
+    else if (current_charge_stage == 'A') { // Absorption (CV)
         sys.chargeMode = 'A';
         // Maintain config.batMaxV
         if (sys.batV > config.batMaxV) {
@@ -433,19 +452,19 @@ void updateMPPT() {
         bool timeout_reached = (millis() - absorption_start > 7200000UL); // 2 hours max
 
         if (tail_current_reached || timeout_reached) {
-            stage = 'F';
+            current_charge_stage = 'F';
             absorption_start = 0;
         }
-        if (sys.batV < config.batMinV + 0.2f) stage = 'B'; // Deep discharge
+        if (sys.batV < config.batMinV + 0.2f) current_charge_stage = 'B'; // Deep discharge
     }
-    else if (stage == 'F') { // Float
+    else if (current_charge_stage == 'F') { // Float
         sys.chargeMode = 'F';
         if (sys.batV > config.batFloatV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
         } else if (sys.batV < config.batFloatV - 0.05f) {
-            if (sys.mpptPWM < PWM_MPPT_MAX) sys.mpptPWM++;
+            if (sys.mpptPWM < 1000) sys.mpptPWM++;
         }
-        if (sys.batV < config.batFloatV - 0.3f) stage = 'B'; // Re-bulk
+        if (sys.batV < config.batFloatV - 0.3f) current_charge_stage = 'B'; // Re-bulk
     }
 
     // MPPT PWM is now 10-bit (0-1023)

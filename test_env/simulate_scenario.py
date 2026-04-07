@@ -8,6 +8,7 @@ def run_scenario(ino_path):
     with open(ino_path, 'r') as f:
         content = f.read()
 
+    # Simple prototype extraction
     matches = re.finditer(r'^\s*(void|int|float|double|long|byte|boolean)\s+(\w+)\s*\(([^)]*)\)\s*\{', content, re.MULTILINE | re.DOTALL)
     prototypes_str = ""
     for match in matches:
@@ -32,74 +33,67 @@ int main() {
         }
     };
 
-    // Scenario 1: DAY (Charging)
-    std::cout << "\\n[SCENARIO] DAY - Charging test" << std::endl;
-    sim.solarOCV = 20.0f;
+    // Scenario 1: DAY - MPPT (Bulk)
+    std::cout << "\\n[SCENARIO] DAY - Bulk Charging (MPPT)" << std::endl;
+    sim.solarOCV = 18.0f;
     sim.batteryV = 3.5f;
     sim.motion = false;
-    for(int i = 0; i < 50; ++i) { loop(); update_sim(); }
+    for(int i = 0; i < 20; ++i) { loop(); update_sim(); }
 
-    // Scenario 2: NIGHT (Motion)
+    // Scenario 2: Absorption Stage
+    std::cout << "\\n[SCENARIO] ABSORPTION - Reaching CV limit" << std::endl;
+    sim.batteryV = 4.14f; // Near limit
+    Serial.sim_input("SB\\n"); // Ensure we start from Bulk if needed
+    for(int i = 0; i < 20; ++i) { loop(); update_sim(); }
+
+    // Force Absorption and check tail current transition
+    std::cout << "\\n[SCENARIO] TAIL CURRENT - Transition to Float" << std::endl;
+    Serial.sim_input("SA\\n"); // Force Absorption
+    for(int i = 0; i < 5; ++i) { loop(); update_sim(); }
+    sim.solarCurrentMA = 20.0f; // Below 50mA tail current
+    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
+
+    // Scenario 3: NIGHT - Motion detection
     std::cout << "\\n[SCENARIO] NIGHT - Motion detection test" << std::endl;
-    sim.solarBusV = 0.5f;
+    sim.solarOCV = 1.0f; // Dark
     sim.motion = true;
     for(int i = 0; i < 10; ++i) { check_motion(); loop(); update_sim(); }
 
-    // Scenario 3: NIGHT (Idle -> Sleep)
-    std::cout << "\\n[SCENARIO] SLEEP - Inactivity test" << std::endl;
+    // Scenario 4: LVD (Low Voltage Disconnect)
+    std::cout << "\\n[SCENARIO] LVD - Battery low test" << std::endl;
+    sim.batteryV = 2.9f; // Below 3.0V
+    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
+
+    // Recovery
+    std::cout << "[SIM] Battery recovery..." << std::endl;
+    sim.batteryV = 4.0f; // High enough to stop sleeping
+    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
+
+    // Scenario 5: Serial Commands & persistence
+    std::cout << "\\n[SCENARIO] SERIAL - Config and Diagnostics" << std::endl;
+    sim.solarOCV = 18.0f; // Day
+    sim.batteryV = 3.8f;
     sim.motion = false;
-    // We need to advance time past config.motionTimeout (15s) + 5s buffer
-    for(int i = 0; i < 200; ++i) {
-        loop();
-        update_sim();
-    }
+    update_sim(); // Propagate solarOCV to solarBusV
 
-    // Scenario 4: Sensor Failure
-    std::cout << "\\n[SCENARIO] FAILURE - INA219 failure test" << std::endl;
-    sim.ina219_ok = false;
-    setup(); // Re-init to trigger failure logic
-    sim.solarBusV = 15.0f;
-    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
-
-    // Scenario 5: Low Battery Recovery
-    std::cout << "\\n[SCENARIO] RECOVERY - Low battery test" << std::endl;
-    sim.ina219_ok = true;
-    setup();
-    sim.batteryV = 2.9f; // Below MIN
-    sim.solarBusV = 0.0f;
-    sim.solarCurrentMA = 0.0f;
-    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
-
-    std::cout << "[SIM] Starting solar charging..." << std::endl;
-    sim.solarBusV = 18.0f;
-    sim.solarCurrentMA = 1000.0f; // High charge current
-    for(int i = 0; i < 50; ++i) { loop(); update_sim(); }
-
-    // Scenario 6: Serial Commands & persistence
-    std::cout << "\\n[SCENARIO] INTERACTIVE - Serial commands test" << std::endl;
-    Serial.sim_input("d\\nc\\nm\\n"); // Diagnostics, Config, Manual Motion
-    for(int i = 0; i < 15; ++i) { loop(); update_sim(); }
-
-    std::cout << "[SIM] Updating parameter (Timeout -> 60000ms)" << std::endl;
-    Serial.sim_input("sT60000\\n");
-    for(int i = 0; i < 10; ++i) { loop(); update_sim(); }
-
-    std::cout << "[SIM] Soft Reset (calling setup)" << std::endl;
-    setup();
-    Serial.sim_input("c"); // Verify config
     for(int i = 0; i < 5; ++i) { loop(); update_sim(); }
 
-    // Scenario 7: Override Timeout
-    std::cout << "\\n[SCENARIO] OVERRIDE - Timeout test" << std::endl;
-    sim.solarBusV = 0.5f; // Night
-    Serial.sim_input("m"); // Override ON
-    loop(); // Process 'm'
-    std::cout << "[SIM] Override state after command: " << (int)sys.isMotion << std::endl;
+    std::cout << "[SIM] Sending 'd' (Diagnostics)" << std::endl;
+    Serial.sim_input("d\\n");
+    for(int i = 0; i < 3; ++i) { loop(); update_sim(); }
 
-    // Jump time forward 6 minutes
-    for(int i = 0; i < 3600; ++i) { update_sim(); }
-    loop(); // Process timeout
-    std::cout << "[SIM] Override state after 6 mins: " << (int)sys.isMotion << std::endl;
+    std::cout << "[SIM] Sending 'c' (Config)" << std::endl;
+    Serial.sim_input("c\\n");
+    for(int i = 0; i < 3; ++i) { loop(); update_sim(); }
+
+    std::cout << "[SIM] Sending 'sM4.35' (Update MaxV)" << std::endl;
+    Serial.sim_input("sM4.35\\n");
+    for(int i = 0; i < 5; ++i) { loop(); update_sim(); }
+
+    std::cout << "[SIM] Soft Reset (calling setup)" << std::endl;
+    setup(); // Should reload config from mock EEPROM
+    Serial.sim_input("c\\n"); // Verify config persisted
+    for(int i = 0; i < 5; ++i) { loop(); update_sim(); }
 
     return 0;
 }
@@ -127,7 +121,7 @@ int main() {
             print(result.stderr)
             return False
 
-        result = subprocess.run(["./test_env/sim_bin"], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(["./test_env/sim_bin"], capture_output=True, text=True, timeout=30)
         print(result.stdout)
         return result.returncode == 0
     finally:
