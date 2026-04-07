@@ -32,7 +32,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, false, true };
+SimSensors sim = { 12.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 0.0, 0.0, false, true };
 
 unsigned long current_time_ms = 0;
 
@@ -48,6 +48,10 @@ void update_sim() {
     // Net current (Solar in - System out)
     float netMA = sim.solarCurrentMA - sim.systemCurrentMA;
     float deltaAH = (netMA / 1000.0f) * (step_ms / 3600000.0f);
+
+    // Stats
+    if (sim.solarCurrentMA > 0) sim.harvestedMAH += (sim.solarCurrentMA) * (step_ms / 3600000.0);
+    sim.consumedMAH += (sim.systemCurrentMA) * (step_ms / 3600000.0);
 
     chargeAH += deltaAH;
     if (chargeAH < 0) chargeAH = 0;
