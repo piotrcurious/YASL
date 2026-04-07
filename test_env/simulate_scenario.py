@@ -22,10 +22,6 @@ def run_scenario(ino_path):
     # Custom simulation main with assertions/checks
     simulation_main = """
 int main() {
-    // Simulated EEPROM persistence for sim stats
-    SimStats stats = {0,0};
-    EEPROM.put(512, stats);
-
     setup();
 
     // Helper to check for motion and trigger ISR

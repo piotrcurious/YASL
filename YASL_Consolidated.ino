@@ -138,16 +138,6 @@ ISR(WDT_vect) {
 // --- Arduino Core ---
 
 void setup() {
-    #ifdef SIMULATION
-    // Reload sim stats if they exist
-    SimStats stats;
-    EEPROM.get(512, stats);
-    if (stats.harvestedMAH >= 0) {
-        sim.harvestedMAH = stats.harvestedMAH;
-        sim.consumedMAH = stats.consumedMAH;
-    }
-    #endif
-
     // 0. Load Configuration
     loadConfig();
 

@@ -75,10 +75,6 @@ void update_sim() {
     if (sim.solarCurrentMA > 0) sim.harvestedMAH += (sim.solarCurrentMA) * (step_ms / 3600000.0);
     sim.consumedMAH += (sim.systemCurrentMA) * (step_ms / 3600000.0);
 
-    // Persist stats in "EEPROM" (offset 512)
-    SimStats stats = { sim.harvestedMAH, sim.consumedMAH };
-    EEPROM.put(512, stats);
-
     chargeAH += deltaAH;
     if (chargeAH < 0) chargeAH = 0;
     if (chargeAH > sim.batteryCapAH) chargeAH = sim.batteryCapAH;
