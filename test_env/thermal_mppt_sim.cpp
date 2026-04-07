@@ -1,4 +1,24 @@
 
+#include "Arduino.h"
+#include "avr/interrupt.h"
+
+void checkAndInitiateSleep();
+void loadConfig();
+void saveConfig();
+void readSensors();
+float getSmoothedADC(uint8_t pin);
+void performCalibration();
+void updateMPPT();
+void runSMCMPPT();
+void updateLight();
+void sleepSystem();
+void configureWDT();
+void disableWDT();
+float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
+
+
+// Content of .ino file
+
 /*
  * YASL (Yet Another Solar Lamp) - Consolidated Version
  *
@@ -704,4 +724,44 @@ void disableWDT() {
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
   if (in_max == in_min) return out_min;
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+
+
+int main() {
+    sim.ina219_ok = false; // Force sensorless mode
+    sim.R_conv_base = 0.2f;
+    sim.tempC = 25.0f;
+    sim.batteryV = 3.5f;
+    sim.solarOCV = 18.0f;
+
+    setup();
+
+    std::cout << "\n[SCENARIO] Sensorless MPPT start" << std::endl;
+    for(int i = 0; i < 50; ++i) {
+        loop();
+        update_sim();
+    }
+
+    std::cout << "\n[SCENARIO] Thermal Drift (Heating up to 75C)" << std::endl;
+    sim.tempC = 75.0f;
+    for(int i = 0; i < 100; ++i) {
+        loop();
+        update_sim();
+    }
+
+    std::cout << "\n[SCENARIO] Triggering Calibration" << std::endl;
+    Serial.sim_input("k\n");
+    for(int i = 0; i < 20; ++i) {
+        loop();
+        update_sim();
+    }
+
+    std::cout << "\n[SCENARIO] Re-evaluating MPPT performance" << std::endl;
+    for(int i = 0; i < 50; ++i) {
+        loop();
+        update_sim();
+    }
+
+    return 0;
 }

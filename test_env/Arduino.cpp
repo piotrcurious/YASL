@@ -75,6 +75,11 @@ void update_sim() {
             float Io = 0.001f;
             float Vt = 2.0f;
             float Ipanel = Isc - Io * (exp(Vsolar_est / (Vt * (sim.tempC + 273.15f) / 298.15f)) - 1.0f);
+
+            // Limit to MPP - simplified for stable sim testing
+            if (Vsolar_est < 15.0f) {
+                Ipanel *= (Vsolar_est / 15.0f);
+            }
             if (Ipanel < 0) Ipanel = 0;
 
             Iout_est = Ipanel / duty;
