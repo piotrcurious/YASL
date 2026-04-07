@@ -53,6 +53,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 // Sliding Mode Control (SMC) Tuning
 #define SMC_BASE_GAIN           2.0f
 #define SMC_DV_THRESHOLD        0.05f  // Noise filter for dV
+#define SMC_S_HYSTERESIS        0.10f  // Error margin for sliding surface
 #define SMC_SENSED_GAIN_MULT    4.0f   // Faster tracking with INA219
 #define SMC_SENSORLESS_BIAS     -10.0f // Right-side bias for stability
 
@@ -61,6 +62,9 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define ABSORPTION_TIMEOUT_MS   7200000UL // 2 hours max
 #define REBULK_FLOAT_DELTA      0.3f   // Restart bulk if V drops this much below Float
 #define REBULK_ABS_DELTA        0.2f   // Restart bulk if V drops this much below Abs
+#define BAT_OVERVOLT_MARGIN     0.20f  // Shutdown MPPT if Vbat > Max + this
+#define CV_REG_MARGIN           0.02f  // Precision for absorption regulation
+#define FLOAT_REG_MARGIN        0.05f  // Precision for float regulation
 
 // Sensorless Model Heuristics (Tuned for typical Buck converter)
 #define DEF_MODEL_R_CONV        0.20f  // Initial R estimation (Ohms)
@@ -69,15 +73,20 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define CALIB_DUTY_RAW          800    // ~78% duty for sampling
 #define CALIB_ISC_EST           3.0f   // Panel short-circuit current heuristic
 #define CALIB_VT_EST            2.0f   // Thermal voltage scale heuristic
+#define CALIB_V_DROP_MIN        1.0f   // Min voltage drop for valid R-calc
+#define INFERENCE_MIN_DUTY      0.05f  // Min duty cycle to attempt inference
 
 // Light & Sleep Behavior
 #define PWM_LED_OFF             0
 #define DEF_LED_MAX_PWM         255
 #define DEF_LED_DIM_PWM         15
+#define LED_FADE_INTERVAL_MS    10
+#define MOTION_CHECK_INTERVAL_MS 1000
 #define DEF_MOTION_TIMEOUT_MS   15000UL
 #define OVERRIDE_TIMEOUT_MS     300000UL // 5 minutes manual light
 #define JSON_INTERVAL_MS        10000UL
 #define SLEEP_IDLE_TIMEOUT_MS   300000UL // 5 mins idle before sleep
+#define LOOP_STABILITY_DELAY_MS 50
 
 // --- System Structures ---
 
@@ -383,7 +392,7 @@ void loop() {
     }
 
     checkAndInitiateSleep();
-    delay(50); // Loop stability
+    delay(LOOP_STABILITY_DELAY_MS);
 }
 
 // --- Support Functions ---
@@ -436,7 +445,7 @@ void readSensors() {
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
         sys.solarP = sys.solarV * sys.solarI;
-    } else if (duty > 0.05f) {
+    } else if (duty > INFERENCE_MIN_DUTY) {
         // Inference logic
         float numerator = (sys.solarV * duty) - sys.batV - model_V_diode;
         if (numerator < 0) numerator = 0;
@@ -455,7 +464,7 @@ void readSensors() {
 
     // Update Daily Stats
     if (sys.batV > sys.batMaxToday) sys.batMaxToday = sys.batV;
-    if (sys.batV < sys.batMinToday || sys.batMinToday == 0) sys.batMinToday = sys.batV;
+    if (sys.batV < sys.batMinToday || sys.batMinToday < 0.01f) sys.batMinToday = sys.batV;
 }
 
 float getSmoothedADC(uint8_t pin) {
@@ -496,7 +505,7 @@ void performCalibration() {
 
     // We'll use a conservative heuristic:
     // If Vpanel dropped significantly below Voc, we are drawing current.
-    if (Vpanel < Voc - 1.0f) {
+    if (Vpanel < Voc - CALIB_V_DROP_MIN) {
         // Crude estimation of Ipanel for calibration
         // I = Isc * (1 - exp(V/Vt - Voc/Vt))
         float Isc_est = CALIB_ISC_EST;
@@ -527,7 +536,7 @@ void updateMPPT() {
     }
 
     // Overvoltage Protection
-    if (sys.batV > config.batMaxV + 0.2f) {
+    if (sys.batV > config.batMaxV + BAT_OVERVOLT_MARGIN) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'X';
         analogWrite(PIN_MPPT_PWM, 0);
@@ -548,7 +557,7 @@ void updateMPPT() {
         // Maintain config.batMaxV
         if (sys.batV > config.batMaxV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
-        } else if (sys.batV < config.batMaxV - 0.02f) {
+        } else if (sys.batV < config.batMaxV - CV_REG_MARGIN) {
             if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
 
@@ -569,7 +578,7 @@ void updateMPPT() {
         sys.chargeMode = 'F';
         if (sys.batV > config.batFloatV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
-        } else if (sys.batV < config.batFloatV - 0.05f) {
+        } else if (sys.batV < config.batFloatV - FLOAT_REG_MARGIN) {
             if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
         if (sys.batV < config.batFloatV - REBULK_FLOAT_DELTA) current_charge_stage = 'B'; // Re-bulk
@@ -599,9 +608,9 @@ void runSMCMPPT() {
             // to avoid voltage collapse when inference error is high.
             float target_S = (ina219_present) ? 0.0f : SMC_SENSORLESS_BIAS;
 
-            if (S > target_S + 0.1f) {
+            if (S > target_S + SMC_S_HYSTERESIS) {
                 if (sys.mpptPWM > (int)current_gain) sys.mpptPWM -= (int)current_gain;
-            } else if (S < target_S - 0.1f) {
+            } else if (S < target_S - SMC_S_HYSTERESIS) {
                 if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM += (int)current_gain;
             }
 
@@ -644,7 +653,7 @@ void updateLight() {
                                 config.batMinV * 100, config.batMaxV * 100, config.ledDimPWM, adaptive_max);
             sys.ledPWM = constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
 
-            if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > 1000)) {
+            if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > MOTION_CHECK_INTERVAL_MS)) {
                 motion_intensity = constrain(motion_intensity + 1, 0, 10);
                 last_motion_check = now;
             }
@@ -659,7 +668,7 @@ void updateLight() {
     }
 
     // Smooth time-based PWM transition (independent of loop rate)
-    if (now - last_fade > 10) { // Update every 10ms
+    if (now - last_fade > LED_FADE_INTERVAL_MS) {
         if (current_led_val < sys.ledPWM) current_led_val += 1.0;
         else if (current_led_val > sys.ledPWM) current_led_val -= 1.0;
         analogWrite(PIN_LED_PWM, (int)current_led_val);
