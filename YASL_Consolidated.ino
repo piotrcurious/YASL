@@ -57,9 +57,9 @@ const long  JSON_INTERVAL_MS = 10000; // Log every 10s
 // --- System Structures ---
 
 struct SystemState {
-    float solarV;       // INA219 Bus + Shunt
-    float solarI;       // INA219 current in mA
-    float solarP;       // mW
+    float solarV;       // Panel Voltage
+    float solarI;       // Panel current (Sensed or Inferred)
+    float solarP;       // Power (Sensed or Inferred)
     float batV;         // ADC averaged
     float batPcnt;      // 0-100%
     float batMaxToday;
@@ -101,10 +101,17 @@ float prevSolarP = 0.0f;
 const float SMC_GAIN = 2.0f;
 char current_charge_stage = 'B';
 
+// Non-linear Inference Parameters
+float model_R_conv = 0.2f;    // Estimated converter resistance (Ohms)
+float model_V_diode = 0.4f;   // Estimated diode drop
+float model_duty_prev = 0.0f;
+
 // Timers
 unsigned long lastLog = 0;
 unsigned long motionStart = 0;
 unsigned long lastMppt = 0;
+unsigned long lastCalib = 0;
+const unsigned long CALIB_INTERVAL_MS = 600000; // 10 minutes
 
 // Wake Flags
 volatile bool wakePIR = false;
@@ -253,6 +260,10 @@ void loop() {
         analogWrite(PIN_LED_PWM, 0);
         sys.isMotion = false;
 
+        if (now - lastCalib > CALIB_INTERVAL_MS) {
+            performCalibration();
+        }
+
         updateMPPT();
     }
 
@@ -344,6 +355,9 @@ void loop() {
                 Serial.println(F("Invalid stage. Use B, A, or F."));
             }
         }
+        else if (cmd == 'k') { // Force Calibration
+            performCalibration();
+        }
     }
 
     checkAndInitiateSleep();
@@ -375,24 +389,46 @@ void saveConfig() {
 }
 
 void readSensors() {
+    // 1. Raw Voltages
     if (ina219_present) {
-        // INA219 Primary Sensor
         float bus = ina219.getBusVoltage_V();
         float shunt = ina219.getShuntVoltage_mV();
         sys.solarV = bus + (shunt / 1000.0f);
-        sys.solarI = ina219.getCurrent_mA();
-        sys.solarP = bus * sys.solarI;
     } else {
-        // Fallback to Raw ADC
         float rawSolar = getSmoothedADC(PIN_SOLAR_ADC);
         sys.solarV = rawSolar * (REF_VOLTAGE / 1023.0f) * SOLAR_DIVIDER_RATIO;
-        sys.solarI = 0.0f; // Cannot measure current without shunt/INA
+    }
+
+    float rawBat = getSmoothedADC(PIN_BAT_ADC);
+    sys.batV = rawBat * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
+
+    // 2. Current Inference (Non-linear Model)
+    // Model: Vsolar * Duty = Vbat + V_diode + (Iout * R_conv)
+    // Ipanel = Iout * Duty
+    // Solving for Ipanel:
+    // Iout = (Vsolar * Duty - Vbat - V_diode) / R_conv
+    // Ipanel = Iout * Duty
+
+    float duty = (float)sys.mpptPWM / 1023.0f;
+
+    if (ina219_present) {
+        sys.solarI = ina219.getCurrent_mA();
+        sys.solarP = sys.solarV * sys.solarI;
+    } else if (duty > 0.05f) {
+        // Inference logic
+        float numerator = (sys.solarV * duty) - sys.batV - model_V_diode;
+        if (numerator < 0) numerator = 0;
+
+        float inferred_Iout = numerator / model_R_conv; // Amps
+        if (inferred_Iout > 10.0f) inferred_Iout = 10.0f; // Safety clamp
+        sys.solarI = inferred_Iout * duty * 1000.0f;    // mA
+        sys.solarP = sys.solarV * sys.solarI;
+    } else {
+        sys.solarI = 0.0f;
         sys.solarP = 0.0f;
     }
 
-    // Bat ADC (Averaged)
-    float raw = getSmoothedADC(PIN_BAT_ADC);
-    sys.batV = raw * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
+    // 3. Update Stats
     sys.batPcnt = constrain(mapFloat(sys.batV, config.batMinV, config.batMaxV, 0, 100), 0, 100);
 
     // Update Daily Stats
@@ -406,6 +442,56 @@ float getSmoothedADC(uint8_t pin) {
         sum += analogRead(pin);
     }
     return (float)sum / 8.0f;
+}
+
+void performCalibration() {
+    if (ina219_present) return; // Not needed if we have direct current sensing
+
+    Serial.println(F("CALIB: Starting Thermal Re-Calibration"));
+
+    // 1. Measure Open Circuit Voltage (Voc)
+    int oldPWM = OCR1A;
+    OCR1A = 0;
+    delay(100); // Wait for transient
+    readSensors();
+    float Voc = sys.solarV;
+
+    // 2. Sample at a known high duty point
+    OCR1A = 800; // ~78% duty
+    delay(100);
+    readSensors();
+    float Vpanel = sys.solarV;
+    float Vbat = sys.batV;
+    float D = 800.0f / 1023.0f;
+
+    // 3. Estimate Ipanel from panel model
+    // Assuming we know the panel's Isc and behavior somewhat (Vpanel/Voc ratio)
+    // or we use the power peak to back-calculate R.
+    // For simplicity, we assume R is the primary unknown that changed with T.
+    // Vbat + V_diode + Iout*R = Vsolar * D
+    // Iout = Ipanel / D
+    // R = (Vsolar * D - Vbat - V_diode) / (Ipanel / D)
+
+    // We'll use a conservative heuristic:
+    // If Vpanel dropped significantly below Voc, we are drawing current.
+    if (Vpanel < Voc - 1.0f) {
+        // Crude estimation of Ipanel for calibration
+        // I = Isc * (1 - exp(V/Vt - Voc/Vt))
+        float Isc_est = 3.0f;
+        float Vt_est = 2.0f;
+        float Ipanel_est = Isc_est * (1.0f - exp((Vpanel - Voc)/Vt_est));
+
+        if (Ipanel_est > 0.1f) {
+            float new_R = ((Vpanel * D) - Vbat - model_V_diode) / (Ipanel_est / D);
+            if (new_R > 0.01f && new_R < 2.0f) {
+                model_R_conv = (model_R_conv * 0.7f) + (new_R * 0.3f); // EMA
+                Serial.print(F("CALIB: New R_conv=")); Serial.println(model_R_conv, 3);
+            }
+        }
+    }
+
+    OCR1A = oldPWM;
+    lastCalib = millis();
 }
 
 void updateMPPT() {
@@ -473,27 +559,34 @@ void updateMPPT() {
 }
 
 void runSMCMPPT() {
-    if (!ina219_present) {
-        sys.mpptPWM = PWM_MPPT_MAX; // Full on if no sensors
-        sys.chargeMode = 'S';
-        return;
-    }
-
     unsigned long now = millis();
     if (now - lastMppt > MPPT_INTERVAL_MS) {
         float dv = sys.solarV - prevSolarV;
         float dp = sys.solarP - prevSolarP;
 
-        if (abs(dv) > 0.01f) {
+        // Sliding Mode Surface S = dP/dV
+        // Goal: S = 0 at MPP.
+        // If S > 0, we are to the left of MPP (dV > 0, dP > 0) -> Need to Increase V (Decrease Duty)
+        // If S < 0, we are to the right of MPP (dV < 0, dP > 0) -> Need to Decrease V (Increase Duty)
+
+        if (fabsf(dv) > 0.02f) {
             float S = dp / dv;
-            // Scale gain for 10-bit resolution (SMC_GAIN * 4)
-            if (S > 0.01f) sys.mpptPWM -= (SMC_GAIN * 4);
-            else if (S < -0.01f) sys.mpptPWM += (SMC_GAIN * 4);
+
+            // Bias: In sensorless mode, we bias towards the right side (Higher Vsolar)
+            // to avoid voltage collapse when inference error is high.
+            float target_S = (ina219_present) ? 0.0f : -5.0f;
+
+            if (S > target_S + 0.01f) {
+                if (sys.mpptPWM > SMC_GAIN) sys.mpptPWM -= (SMC_GAIN * 4);
+            } else if (S < target_S - 0.01f) {
+                if (sys.mpptPWM < 1000) sys.mpptPWM += (SMC_GAIN * 4);
+            }
 
             prevSolarV = sys.solarV;
             prevSolarP = sys.solarP;
         } else {
-            sys.mpptPWM += SMC_GAIN;
+            // Small perturbation if dv is zero
+            sys.mpptPWM += (int)SMC_GAIN;
         }
         lastMppt = now;
     }

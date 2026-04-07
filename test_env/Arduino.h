@@ -99,9 +99,27 @@ void analogWrite(int pin, int val);
 
 long map(long x, long in_min, long in_max, long out_min, long out_max);
 
-#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
-#define max(a,b) ((a)>(b)?(a):(b))
+#ifdef __cplusplus
+#include <algorithm>
+#ifndef min
+template<class T, class U>
+auto min(T a, U b) -> decltype(a < b ? a : b) { return a < b ? a : b; }
+#endif
+#ifndef max
+template<class T, class U>
+auto max(T a, U b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
+#endif
+#else
+#ifndef min
 #define min(a,b) ((a)<(b)?(a):(b))
+#endif
+#ifndef max
+#define max(a,b) ((a)>(b)?(a):(b))
+#endif
+#endif
+#ifndef constrain
+#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+#endif
 
 #define F(x) x
 
@@ -259,6 +277,8 @@ struct SimSensors {
     float systemCurrentMA;
     double harvestedMAH;
     double consumedMAH;
+    float tempC;      // Simulation Temperature
+    float R_conv_base; // Base resistance at 25C
     bool  motion;
     bool  ina219_ok;
 };
