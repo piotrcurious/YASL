@@ -21,38 +21,63 @@
 #include <avr/interrupt.h>
 #include <EEPROM.h>
 
-// --- Configuration ---
-
-// Pin Definitions
+// --- Hardware Pins ---
 const uint8_t PIN_SOLAR_ADC = A0;   // Raw solar ADC (backup/redundant)
 const uint8_t PIN_BAT_ADC   = A1;   // Main Battery Voltage Divider
 const uint8_t PIN_LED_PWM   = 3;    // LED Mosfet (Timer2)
 const uint8_t PIN_PIR       = 2;    // Motion Sensor (D2 is INT0)
 const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 
-// Reference & Ratios
-const float REF_VOLTAGE = 5.0f;
-const float BAT_DIVIDER_RATIO = 3.0f; // e.g., (10k+5k)/5k = 3.0
-const float SOLAR_DIVIDER_RATIO = 4.0f;
+// --- Tuning & Defaults ---
 
-// Battery (Li-Ion/Li-Po typical)
-const float BAT_MAX_V       = 4.15f;  // Charge limit (Conservative)
-const float BAT_MIN_V       = 3.00f;  // Low Voltage Disconnect
-const float BAT_RECONNECT_V = 3.25f;  // Re-enable load voltage after LVD
+// System Reference
+#define REF_VOLTAGE             5.0f
+#define BAT_DIVIDER_RATIO       3.0f
+#define SOLAR_DIVIDER_RATIO     4.0f
+#define ADC_SMOOTHING_SAMPLES   8
+
+// Battery Defaults (Li-Ion/Li-Po typical)
+#define DEF_BAT_MAX_V           4.15f  // CV Absorption Voltage
+#define DEF_BAT_MIN_V           3.00f  // Low Voltage Disconnect
+#define DEF_BAT_FLOAT_V         3.45f  // Float Voltage
+#define BAT_RECONNECT_V         3.25f  // Recovery Voltage after LVD
+#define BAT_LOW_SLEEP_PCNT      40.0f  // Sleep if dark and below this %
 
 // Solar & MPPT
-const float SOLAR_START_V   = 5.0f;   // Min voltage to start switching
-const float SOLAR_DARK_V    = 2.0f;   // Bus voltage below which it's night
-const int   PWM_MPPT_MAX    = 240;    // Cap to avoid 100% duty cycle issues
-const int   PWM_MPPT_MIN    = 0;
-const long  MPPT_INTERVAL_MS = 100;
+#define SOLAR_START_V           5.0f   // Min voltage to start switching
+#define SOLAR_DARK_V            2.0f   // Bus voltage below which it's night
+#define MPPT_INTERVAL_MS        100
+#define MPPT_PWM_MAX_RES        1000   // 10-bit range cap (0-1023)
+#define MPPT_PWM_MIN_RES        0
 
-// Light Behavior
-const int   PWM_LED_MAX     = 255;
-const int   PWM_LED_DIM     = 15;
-const int   PWM_LED_OFF     = 0;
-const long  MOTION_ON_MS    = 15000;  // 15 seconds after motion
-const long  JSON_INTERVAL_MS = 10000; // Log every 10s
+// Sliding Mode Control (SMC) Tuning
+#define SMC_BASE_GAIN           2.0f
+#define SMC_DV_THRESHOLD        0.05f  // Noise filter for dV
+#define SMC_SENSED_GAIN_MULT    4.0f   // Faster tracking with INA219
+#define SMC_SENSORLESS_BIAS     -10.0f // Right-side bias for stability
+
+// Charge Stage Constants
+#define TAIL_CURRENT_MA         50.0f  // Absorption -> Float transition
+#define ABSORPTION_TIMEOUT_MS   7200000UL // 2 hours max
+#define REBULK_FLOAT_DELTA      0.3f   // Restart bulk if V drops this much below Float
+#define REBULK_ABS_DELTA        0.2f   // Restart bulk if V drops this much below Abs
+
+// Sensorless Model Heuristics (Tuned for typical Buck converter)
+#define DEF_MODEL_R_CONV        0.20f  // Initial R estimation (Ohms)
+#define DEF_MODEL_V_DIODE       0.40f  // Schottky/Body Diode drop
+#define CALIB_INTERVAL_MS       600000UL // 10 minutes
+#define CALIB_DUTY_RAW          800    // ~78% duty for sampling
+#define CALIB_ISC_EST           3.0f   // Panel short-circuit current heuristic
+#define CALIB_VT_EST            2.0f   // Thermal voltage scale heuristic
+
+// Light & Sleep Behavior
+#define PWM_LED_OFF             0
+#define DEF_LED_MAX_PWM         255
+#define DEF_LED_DIM_PWM         15
+#define DEF_MOTION_TIMEOUT_MS   15000UL
+#define OVERRIDE_TIMEOUT_MS     300000UL // 5 minutes manual light
+#define JSON_INTERVAL_MS        10000UL
+#define SLEEP_IDLE_TIMEOUT_MS   300000UL // 5 mins idle before sleep
 
 // --- System Structures ---
 
@@ -93,17 +118,15 @@ bool last_dark_state = true;
 int motion_intensity = 0; // Cumulative motion tracker for adaptive brightness
 bool manual_override = false;
 unsigned long manual_override_start = 0;
-const unsigned long OVERRIDE_TIMEOUT = 300000; // 5 minutes
 
 // MPPT Trackers (Sliding Mode Control)
 float prevSolarV = 0.0f;
 float prevSolarP = 0.0f;
-const float SMC_GAIN = 2.0f;
 char current_charge_stage = 'B';
 
 // Non-linear Inference Parameters
-float model_R_conv = 0.2f;    // Estimated converter resistance (Ohms)
-float model_V_diode = 0.4f;   // Estimated diode drop
+float model_R_conv = DEF_MODEL_R_CONV;
+float model_V_diode = DEF_MODEL_V_DIODE;
 float model_duty_prev = 0.0f;
 
 // Timers
@@ -111,7 +134,6 @@ unsigned long lastLog = 0;
 unsigned long motionStart = 0;
 unsigned long lastMppt = 0;
 unsigned long lastCalib = 0;
-const unsigned long CALIB_INTERVAL_MS = 600000; // 10 minutes
 
 // Wake Flags
 volatile bool wakePIR = false;
@@ -187,11 +209,11 @@ void setup() {
 void checkAndInitiateSleep() {
     bool shouldSleep = false;
 
-    if (sys.batPcnt < 40.0f && sys.isDark) {
+    if (sys.batPcnt < BAT_LOW_SLEEP_PCNT && sys.isDark) {
         shouldSleep = true;
         Serial.println(F("Low battery, initiating timed sleep."));
     } else if (sys.isDark && sys.ledPWM <= config.ledDimPWM && !sys.isMotion &&
-               (millis() - motionStart > 300000UL)) {
+               (millis() - motionStart > SLEEP_IDLE_TIMEOUT_MS)) {
         shouldSleep = true;
         Serial.println(F("Dark and idle, initiating timed sleep."));
     }
@@ -238,7 +260,7 @@ void loop() {
         sys.chargeMode = 'N';
 
         // Check Manual Override timeout
-        if (manual_override && (now - manual_override_start > OVERRIDE_TIMEOUT)) {
+        if (manual_override && (now - manual_override_start > OVERRIDE_TIMEOUT_MS)) {
             manual_override = false;
             sys.isMotion = false;
             Serial.println(F("Override: Timeout"));
@@ -256,7 +278,7 @@ void loop() {
     else {
         // --- DAY ---
         // Light stays off or very dim
-        sys.ledPWM = PWM_LED_OFF;
+        sys.ledPWM = 0;
         analogWrite(PIN_LED_PWM, 0);
         sys.isMotion = false;
 
@@ -371,12 +393,12 @@ void loadConfig() {
     if (config.magic != MAGIC_TOKEN) {
         // Factory Defaults
         config.magic = MAGIC_TOKEN;
-        config.batMaxV = BAT_MAX_V;
-        config.batMinV = BAT_MIN_V;
-        config.batFloatV = 3.45f; // Standard LiFePO4/Li-ion float
-        config.ledMaxPWM = PWM_LED_MAX;
-        config.ledDimPWM = PWM_LED_DIM;
-        config.motionTimeout = MOTION_ON_MS;
+        config.batMaxV = DEF_BAT_MAX_V;
+        config.batMinV = DEF_BAT_MIN_V;
+        config.batFloatV = DEF_BAT_FLOAT_V;
+        config.ledMaxPWM = DEF_LED_MAX_PWM;
+        config.ledDimPWM = DEF_LED_DIM_PWM;
+        config.motionTimeout = DEF_MOTION_TIMEOUT_MS;
         saveConfig();
         Serial.println(F("EEPROM: Using Defaults"));
     } else {
@@ -438,10 +460,10 @@ void readSensors() {
 
 float getSmoothedADC(uint8_t pin) {
     long sum = 0;
-    for(int i=0; i<8; i++) {
+    for(int i=0; i < ADC_SMOOTHING_SAMPLES; i++) {
         sum += analogRead(pin);
     }
-    return (float)sum / 8.0f;
+    return (float)sum / ADC_SMOOTHING_SAMPLES;
 }
 
 void performCalibration() {
@@ -457,12 +479,12 @@ void performCalibration() {
     float Voc = sys.solarV;
 
     // 2. Sample at a known high duty point
-    OCR1A = 800; // ~78% duty
+    OCR1A = CALIB_DUTY_RAW;
     delay(100);
     readSensors();
     float Vpanel = sys.solarV;
     float Vbat = sys.batV;
-    float D = 800.0f / 1023.0f;
+    float D = (float)CALIB_DUTY_RAW / 1023.0f;
 
     // 3. Estimate Ipanel from panel model
     // Assuming we know the panel's Isc and behavior somewhat (Vpanel/Voc ratio)
@@ -477,8 +499,8 @@ void performCalibration() {
     if (Vpanel < Voc - 1.0f) {
         // Crude estimation of Ipanel for calibration
         // I = Isc * (1 - exp(V/Vt - Voc/Vt))
-        float Isc_est = 3.0f;
-        float Vt_est = 2.0f;
+        float Isc_est = CALIB_ISC_EST;
+        float Vt_est = CALIB_VT_EST;
         float Ipanel_est = Isc_est * (1.0f - exp((Vpanel - Voc)/Vt_est));
 
         if (Ipanel_est > 0.1f) {
@@ -527,34 +549,34 @@ void updateMPPT() {
         if (sys.batV > config.batMaxV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
         } else if (sys.batV < config.batMaxV - 0.02f) {
-            if (sys.mpptPWM < 1000) sys.mpptPWM++;
+            if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
 
         // Transition to Float after current drops (Tail Current) or timeout
         static unsigned long absorption_start = 0;
         if (absorption_start == 0) absorption_start = millis();
 
-        bool tail_current_reached = (ina219_present && sys.solarI < 50.0f && sys.solarI > 0);
-        bool timeout_reached = (millis() - absorption_start > 7200000UL); // 2 hours max
+        bool tail_current_reached = (ina219_present && sys.solarI < TAIL_CURRENT_MA && sys.solarI > 0);
+        bool timeout_reached = (millis() - absorption_start > ABSORPTION_TIMEOUT_MS);
 
         if (tail_current_reached || timeout_reached) {
             current_charge_stage = 'F';
             absorption_start = 0;
         }
-        if (sys.batV < config.batMinV + 0.2f) current_charge_stage = 'B'; // Deep discharge
+        if (sys.batV < config.batMinV + REBULK_ABS_DELTA) current_charge_stage = 'B'; // Deep discharge
     }
     else if (current_charge_stage == 'F') { // Float
         sys.chargeMode = 'F';
         if (sys.batV > config.batFloatV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
         } else if (sys.batV < config.batFloatV - 0.05f) {
-            if (sys.mpptPWM < 1000) sys.mpptPWM++;
+            if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
-        if (sys.batV < config.batFloatV - 0.3f) current_charge_stage = 'B'; // Re-bulk
+        if (sys.batV < config.batFloatV - REBULK_FLOAT_DELTA) current_charge_stage = 'B'; // Re-bulk
     }
 
     // MPPT PWM is now 10-bit (0-1023)
-    sys.mpptPWM = constrain(sys.mpptPWM, 0, 1000); // Leave some margin
+    sys.mpptPWM = constrain(sys.mpptPWM, MPPT_PWM_MIN_RES, MPPT_PWM_MAX_RES);
     OCR1A = sys.mpptPWM;
 }
 
@@ -566,30 +588,28 @@ void runSMCMPPT() {
 
         // Sliding Mode Surface S = dP/dV
         // Goal: S = 0 at MPP.
-        // If S > 0, we are to the left of MPP (dV > 0, dP > 0) -> Need to Increase V (Decrease Duty)
-        // If S < 0, we are to the right of MPP (dV < 0, dP > 0) -> Need to Decrease V (Increase Duty)
 
-        if (fabsf(dv) > 0.05f) {
+        if (fabsf(dv) > SMC_DV_THRESHOLD) {
             float S = dp / dv;
 
             // Sliding Mode Gain - Adaptive based on confidence
-            float current_gain = (ina219_present) ? (SMC_GAIN * 4.0f) : SMC_GAIN;
+            float current_gain = (ina219_present) ? (SMC_BASE_GAIN * SMC_SENSED_GAIN_MULT) : SMC_BASE_GAIN;
 
             // Bias: In sensorless mode, we bias towards the right side (Higher Vsolar)
             // to avoid voltage collapse when inference error is high.
-            float target_S = (ina219_present) ? 0.0f : -10.0f;
+            float target_S = (ina219_present) ? 0.0f : SMC_SENSORLESS_BIAS;
 
             if (S > target_S + 0.1f) {
                 if (sys.mpptPWM > (int)current_gain) sys.mpptPWM -= (int)current_gain;
             } else if (S < target_S - 0.1f) {
-                if (sys.mpptPWM < 1000) sys.mpptPWM += (int)current_gain;
+                if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM += (int)current_gain;
             }
 
             prevSolarV = sys.solarV;
             prevSolarP = sys.solarP;
         } else {
             // Small perturbation if dv is zero
-            sys.mpptPWM += (int)SMC_GAIN;
+            sys.mpptPWM += (int)SMC_BASE_GAIN;
         }
         lastMppt = now;
     }
