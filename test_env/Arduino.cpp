@@ -36,7 +36,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 0.0, 0.0, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 0.0, 0.0, 25.0f, 0.2f, false, true };
 
 unsigned long current_time_ms = 0;
 
@@ -45,31 +45,41 @@ unsigned long millis() {
 }
 
 void update_sim() {
-    // Buck Converter Model (Idealized):
-    // V_out = V_in * Duty
-    // I_in = I_out * Duty
-    // In our case, V_out is fixed at Battery Voltage (sim.batteryV).
-    // So V_in (sim.solarBusV) = sim.batteryV / Duty (if Duty > 0)
+    // Non-Ideal Buck Converter Model:
+    // Vbat = (Vsolar * Duty) - (Iout * R_conv) - V_diode
+    // Iin = Iout * Duty (ignoring switching losses for now)
+    // R_conv(T) = R_base * (1 + alpha * (T - 25))
+
+    float alpha = 0.004f; // Thermal coefficient (Copper/Silicon avg)
+    float R_curr = sim.R_conv_base * (1.0f + alpha * (sim.tempC - 25.0f));
+    float V_diode = 0.4f; // Schottky or Body Diode drop
 
     float duty = (float)OCR1A / 1023.0f;
+
     if (duty < 0.01f) {
         sim.solarBusV = sim.solarOCV;
         sim.solarCurrentMA = 0;
     } else {
-        sim.solarBusV = sim.batteryV / duty;
-        if (sim.solarBusV > sim.solarOCV) {
-            sim.solarBusV = sim.solarOCV;
-            sim.solarCurrentMA = 0;
-        } else {
+        // We need to find Iout that satisfies both the Panel and the Converter.
+        // Ipanel(Vsolar) = Iout * Duty
+        // Vsolar = (Vbat + V_diode + Iout * R_curr) / Duty
+
+        // Iterative solver for equilibrium
+        float Iout_est = 0.0f;
+        for (int i=0; i<5; ++i) {
+            float Vsolar_est = (sim.batteryV + V_diode + (Iout_est/1000.0f) * R_curr) / duty;
+            if (Vsolar_est > sim.solarOCV) Vsolar_est = sim.solarOCV;
+
             // PV Panel Model: simplified diode equation
-            // I = Isc - Io * (exp(V/Vt) - 1)
             float Isc = 3000.0f; // 3A
             float Io = 0.001f;
-            float Vt = 2.0f; // Thermal voltage scale
-            float panel_current = Isc - Io * (exp(sim.solarBusV / Vt) - 1.0f);
-            if (panel_current < 0) panel_current = 0;
+            float Vt = 2.0f;
+            float Ipanel = Isc - Io * (exp(Vsolar_est / (Vt * (sim.tempC + 273.15f) / 298.15f)) - 1.0f);
+            if (Ipanel < 0) Ipanel = 0;
 
-            sim.solarCurrentMA = panel_current;
+            Iout_est = Ipanel / duty;
+            sim.solarBusV = Vsolar_est;
+            sim.solarCurrentMA = Ipanel;
         }
     }
 
@@ -78,7 +88,6 @@ void update_sim() {
     current_time_ms += step_ms;
 
     // Net current (Solar in - System out)
-    // I_out = I_in / Duty
     float solarOutMA = (duty > 0.01f) ? (sim.solarCurrentMA / duty) : 0;
     float netMA = solarOutMA - sim.systemCurrentMA;
     float deltaAH = (netMA / 1000.0f) * (step_ms / 3600000.0f);
@@ -86,6 +95,11 @@ void update_sim() {
     // Stats
     if (sim.solarCurrentMA > 0) sim.harvestedMAH += (sim.solarCurrentMA) * (step_ms / 3600000.0);
     sim.consumedMAH += (sim.systemCurrentMA) * (step_ms / 3600000.0);
+
+    // Self-heating: simple model
+    // dT = (P_loss * R_thermal - (T - T_ambient)) * dt / C_thermal
+    float P_loss = (solarOutMA / 1000.0f) * (solarOutMA / 1000.0f) * R_curr;
+    sim.tempC += (P_loss * 10.0f - (sim.tempC - 25.0f)) * (step_ms / 10000.0f);
 
     chargeAH += deltaAH;
     if (chargeAH < 0) chargeAH = 0;
