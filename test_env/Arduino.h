@@ -210,6 +210,7 @@ inline String operator+(const char* a, const String& b) {
 // --- Simulation Extensions ---
 struct SimSensors {
     float solarBusV;
+    float solarOCV; // Open Circuit Voltage
     float solarShuntV;
     float solarCurrentMA;
     float batteryV;

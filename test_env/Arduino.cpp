@@ -32,7 +32,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 0.0, 0.0, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 0.0, 0.0, false, true };
 
 unsigned long current_time_ms = 0;
 
@@ -90,6 +90,17 @@ void analogWrite(int pin, int val) {
     if (pin == 3) { // LED
         // Assume LED at 100% takes 500mA
         sim.systemCurrentMA = 10.0f + (val / 255.0f) * 500.0f;
+    }
+    if (pin == 9) { // MPPT Buck Converter
+        // Simple Solar Model: I = Isc * (1 - exp(V - Voc))
+        // Here we'll just simulate a resistive drop for simplicity in this turn
+        // Higher duty cycle (val) -> Lower Bus Voltage (more load on panel)
+        float load_factor = (float)val / 255.0f;
+        sim.solarBusV = sim.solarOCV - (load_factor * 5.0f);
+        if (sim.solarBusV < 0) sim.solarBusV = 0;
+
+        // I = V/R style current
+        sim.solarCurrentMA = load_factor * 1000.0f * (sim.solarBusV / sim.solarOCV);
     }
 }
 

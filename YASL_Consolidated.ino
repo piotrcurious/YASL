@@ -86,10 +86,14 @@ volatile SystemState sys = {0,0,0,0,0,true,false,0,0,'N'};
 Config config;
 bool ina219_present = false;
 int motion_intensity = 0; // Cumulative motion tracker for adaptive brightness
+bool manual_override = false;
+unsigned long manual_override_start = 0;
+const unsigned long OVERRIDE_TIMEOUT = 300000; // 5 minutes
 
 // MPPT Trackers
 float prevSolarP = 0.0f;
 bool  mpptUp = true;
+const float MPPT_DEADBAND_MW = 5.0f; // Ignore changes smaller than this
 
 // Timers
 unsigned long lastLog = 0;
@@ -208,11 +212,18 @@ void loop() {
         analogWrite(PIN_MPPT_PWM, 0);
         sys.chargeMode = 'N';
 
+        // Check Manual Override timeout
+        if (manual_override && (now - manual_override_start > OVERRIDE_TIMEOUT)) {
+            manual_override = false;
+            sys.isMotion = false;
+            Serial.println(F("Override: Timeout"));
+        }
+
         updateLight();
 
         // Deep sleep if idle
-        if (!sys.isMotion && sys.ledPWM <= PWM_LED_DIM) {
-            if (now - motionStart > MOTION_ON_MS + 5000) {
+        if (!sys.isMotion && sys.ledPWM <= config.ledDimPWM && !manual_override) {
+            if (now - motionStart > config.motionTimeout + 5000) {
                 sleepSystem();
             }
         }
@@ -265,9 +276,11 @@ void loop() {
             Serial.print(F("Timeout: ")); Serial.println(config.motionTimeout);
         }
         else if (cmd == 'm') { // Manual Light Toggle
-            sys.isMotion = !sys.isMotion;
+            manual_override = !manual_override;
+            sys.isMotion = manual_override;
             motionStart = now;
-            Serial.print(F("Manual Motion: ")); Serial.println(sys.isMotion);
+            manual_override_start = now;
+            Serial.print(F("Manual Override: ")); Serial.println(manual_override);
         }
         else if (cmd == 's') { // Set Param
             char param = Serial.read();
@@ -287,6 +300,12 @@ void loop() {
             config.magic = 0;
             loadConfig();
             Serial.println(F("Config Reset"));
+        }
+        else if (cmd == 'h' || cmd == '?') {
+            Serial.println(F("--- HELP ---"));
+            Serial.println(F("d: Diag, c: Config, m: Toggle Override"));
+            Serial.println(F("sM [val]: Set BatMax, sm [val]: Set BatMin"));
+            Serial.println(F("sT [ms]: Set Timeout, r: Reset Defaults"));
         }
     }
 
@@ -381,11 +400,14 @@ void updateMPPT() {
         unsigned long now = millis();
         if (now - lastMppt > MPPT_INTERVAL_MS) {
             float deltaP = sys.solarP - prevSolarP;
-            if (deltaP < 0) mpptUp = !mpptUp;
 
-            if (mpptUp) sys.mpptPWM++; else sys.mpptPWM--;
+            // Apply deadband
+            if (abs(deltaP) > MPPT_DEADBAND_MW) {
+                if (deltaP < 0) mpptUp = !mpptUp;
+                if (mpptUp) sys.mpptPWM++; else sys.mpptPWM--;
+                prevSolarP = sys.solarP;
+            }
 
-            prevSolarP = sys.solarP;
             lastMppt = now;
         }
     }
