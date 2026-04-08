@@ -3,7 +3,7 @@
 #include "avr/interrupt.h"
 
 void checkAndInitiateSleep();
-void processCommand(String line);
+void processCommand(const char* line);
 void loadConfig();
 void saveConfig();
 void readSensors();
@@ -41,6 +41,7 @@ float mapFloat(float x, float in_min, float in_max, float out_min, float out_max
 #include <avr/power.h>
 #include <avr/interrupt.h>
 #include <EEPROM.h>
+#include <string.h>
 
 // --- Hardware Pins ---
 const uint8_t PIN_SOLAR_ADC = A0;   // Raw solar ADC (backup/redundant)
@@ -70,7 +71,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define SOLAR_DARK_V            2.0f   // Bus voltage below which it's night
 #define SOLAR_HYST_V            0.5f   // Hysteresis for day/night transition
 #define MPPT_INTERVAL_MS        100
-#define MPPT_PWM_MAX_RES        1000   // 10-bit range cap (0-1023)
+#define MPPT_PWM_MAX_RES        1023   // 10-bit range (Full ICR1)
 #define MPPT_PWM_MIN_RES        0
 
 // Sliding Mode Control (SMC) Tuning
@@ -125,7 +126,8 @@ struct SystemState {
     bool  isMotion;
     int   ledPWM;
     int   mpptPWM;
-    char  chargeMode;   // 'N'ight, 'L'ow solar, 'B'ulk (MPPT), 'C'V (Absorption), 'X' Overvoltage
+    char  chargeMode;   // 'N'ight, 'L'ow solar, 'B'ulk (MPPT), 'A'bsorption (CV), 'F'loat, 'X' Overvoltage
+    unsigned long absorptionStart;
 };
 
 // Permanent Configuration Struct (EEPROM)
@@ -142,7 +144,7 @@ struct Config {
 const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
 
 // Global State
-volatile SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N'};
+SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N', 0};
 Config config;
 float current_led_val = 0;
 bool ina219_present = false;
@@ -152,8 +154,8 @@ bool manual_override = false;
 unsigned long manual_override_start = 0;
 
 // MPPT Trackers (Sliding Mode Control)
-float prevSolarV = 0.0f;
-float prevSolarP = 0.0f;
+float prevSolarV = -1.0f; // Flag for initialization
+float prevSolarP = -1.0f;
 char current_charge_stage = 'B';
 
 // Non-linear Inference Parameters
@@ -190,7 +192,6 @@ Adafruit_INA219 ina219;
 
 ISR(INT0_vect) {
     wakePIR = true;
-    // Keep interrupt enabled so we can re-trigger while awake
 }
 
 ISR(WDT_vect) {
@@ -291,7 +292,7 @@ void loop() {
     if (sys.isDark) {
         // --- NIGHT ---
         sys.mpptPWM = 0;
-        analogWrite(PIN_MPPT_PWM, 0);
+        OCR1A = 0;
         sys.chargeMode = 'N';
 
         // Check Manual Override timeout
@@ -343,15 +344,16 @@ void loop() {
     }
 
     // --- Command Processing (Non-Blocking) ---
-    static String rxLine = "";
+    static char rxBuffer[32];
+    static uint8_t rxIndex = 0;
     while (Serial.available() > 0) {
         char c = Serial.read();
-        if (c == '\n') {
-            rxLine.trim();
-            processCommand(rxLine);
-            rxLine = "";
-        } else {
-            rxLine += c;
+        if (c == '\n' || c == '\r') {
+            rxBuffer[rxIndex] = '\0';
+            if (rxIndex > 0) processCommand(rxBuffer);
+            rxIndex = 0;
+        } else if (rxIndex < sizeof(rxBuffer) - 1) {
+            rxBuffer[rxIndex++] = c;
         }
     }
 
@@ -359,8 +361,8 @@ void loop() {
     delay(LOOP_STABILITY_DELAY_MS);
 }
 
-void processCommand(String line) {
-    if (line.length() == 0) return;
+void processCommand(const char* line) {
+    if (strlen(line) == 0) return;
     unsigned long now = millis();
     char cmd = line[0];
         if (cmd == 'd') { // Diagnostics
@@ -390,7 +392,7 @@ void processCommand(String line) {
         }
         else if (cmd == 's') { // Set Param (e.g. sM 4.2)
             char param = line[1];
-            float val = line.substring(2).toFloat();
+            float val = atof(&line[2]);
             if (param == 'M') { config.batMaxV = val; }
             else if (param == 'm') { config.batMinV = val; }
             else if (param == 'F') { config.batFloatV = val; }
@@ -583,7 +585,7 @@ void updateMPPT() {
     if (sys.batV > config.batMaxV + BAT_OVERVOLT_MARGIN) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'X';
-        analogWrite(PIN_MPPT_PWM, 0);
+        OCR1A = 0;
         return;
     }
 
@@ -592,6 +594,7 @@ void updateMPPT() {
         sys.chargeMode = 'B';
         if (sys.batV >= config.batMaxV) {
             current_charge_stage = 'A'; // To Absorption
+            sys.absorptionStart = millis();
         } else {
             runSMCMPPT();
         }
@@ -606,15 +609,15 @@ void updateMPPT() {
         }
 
         // Transition to Float after current drops (Tail Current) or timeout
-        static unsigned long absorption_start = 0;
-        if (absorption_start == 0) absorption_start = millis();
+        // Inferred battery current: Ibat = Isolar / Duty
+        float duty = (float)sys.mpptPWM / 1023.0f;
+        float batCurrentMA = (duty > 0.1f) ? (sys.solarI / duty) : 0;
 
-        bool tail_current_reached = (ina219_present && sys.solarI < TAIL_CURRENT_MA && sys.solarI > 0);
-        bool timeout_reached = (millis() - absorption_start > ABSORPTION_TIMEOUT_MS);
+        bool tail_current_reached = (ina219_present && batCurrentMA < TAIL_CURRENT_MA && batCurrentMA > 0);
+        bool timeout_reached = (millis() - sys.absorptionStart > ABSORPTION_TIMEOUT_MS);
 
         if (tail_current_reached || timeout_reached) {
             current_charge_stage = 'F';
-            absorption_start = 0;
         }
         if (sys.batV < config.batMinV + REBULK_ABS_DELTA) current_charge_stage = 'B'; // Deep discharge
     }
@@ -634,6 +637,13 @@ void updateMPPT() {
 }
 
 void runSMCMPPT() {
+    // Initializing trackers on first run
+    if (prevSolarV < 0) {
+        prevSolarV = sys.solarV;
+        prevSolarP = sys.solarP_mW;
+        return;
+    }
+
     unsigned long now = millis();
     if (now - lastMppt > MPPT_INTERVAL_MS) {
         float dv = sys.solarV - prevSolarV;
