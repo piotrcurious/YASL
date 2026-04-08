@@ -41,7 +41,6 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define DEF_BAT_MAX_V           4.15f  // CV Absorption Voltage
 #define DEF_BAT_MIN_V           3.00f  // Low Voltage Disconnect
 #define DEF_BAT_FLOAT_V         3.45f  // Float Voltage
-#define BAT_RECONNECT_V         3.25f  // Recovery Voltage after LVD
 #define BAT_LOW_SLEEP_PCNT      40.0f  // Sleep if dark and below this %
 
 // Solar & MPPT
@@ -192,7 +191,7 @@ void setup() {
 
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v1.8 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v1.9 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -592,7 +591,16 @@ void performCalibration() {
 }
 
 void updateMPPT() {
-    // 1. Overvoltage Protection (Priority 1)
+    // 1. Mode Recovery & State Synchronization (Priority 1)
+    // Clear fault/low states if conditions are now good, before any early returns.
+    if (sys.chargeMode == 'X' && sys.batV < config.batMaxV) {
+        sys.chargeMode = current_charge_stage;
+    }
+    if ((sys.chargeMode == 'N' || sys.chargeMode == 'L') && !sys.isDark && sys.solarV >= SOLAR_START_V) {
+        sys.chargeMode = current_charge_stage;
+    }
+
+    // 2. Overvoltage Protection (Emergency Cutoff)
     if (sys.batV > config.batMaxV + BAT_OVERVOLT_MARGIN) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'X';
@@ -600,7 +608,7 @@ void updateMPPT() {
         return;
     }
 
-    // 2. Safety & Night check
+    // 3. Safety & Night check
     if (sys.solarV < SOLAR_START_V || sys.isDark) {
         sys.mpptPWM = 0;
         if (sys.isDark) sys.chargeMode = 'N';
@@ -611,16 +619,12 @@ void updateMPPT() {
         return;
     }
 
-    // 3. MPPT Startup Kick: If idle but solar is present, give it a nudge
+    // 4. MPPT Startup Kick: If idle but solar is present, give it a nudge
     if (sys.mpptPWM == 0 && sys.solarV > SOLAR_START_V) {
         sys.mpptPWM = SOLAR_KICK_PWM;
         OCR1A = sys.mpptPWM;
+        prevSolarV = -1.0f; // Ensure trackers reset after kick
         return;
-    }
-    // Mode 'X' recovery: if we were in mode X but voltage is now safe,
-    // allow returning to normal stage logic.
-    if (sys.chargeMode == 'X' && sys.batV < config.batMaxV) {
-        sys.chargeMode = current_charge_stage;
     }
 
     // 3-Stage Logic
@@ -786,6 +790,7 @@ void sleepSystem() {
 
     // Kill outputs
     analogWrite(PIN_LED_PWM, 0);
+    current_led_val = 0; // Reset software fade state
     OCR1A = 0; // MPPT 10-bit PWM off
 
     // Peripheral Shutdown
