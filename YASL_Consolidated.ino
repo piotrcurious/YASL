@@ -154,10 +154,14 @@ volatile bool wakeWDT = false;
 
 // --- Prototypes ---
 void loadConfig();
+void validateConfig();
 void saveConfig();
 void readSensors();
 void updateMPPT();
+void runSMCMPPT();
+void performCalibration();
 void updateLight();
+void processCommand(const char* line);
 void sleepSystem();
 void configureWDT();
 void disableWDT();
@@ -171,6 +175,8 @@ Adafruit_INA219 ina219;
 
 ISR(INT0_vect) {
     wakePIR = true;
+    // Disable interrupt to prevent wake loops if line is held LOW
+    EIMSK &= ~(1 << INT0);
 }
 
 ISR(WDT_vect) {
@@ -286,7 +292,12 @@ void loop() {
         // Deep sleep if idle
         if (!sys.isMotion && sys.ledPWM <= config.ledDimPWM && !manual_override) {
             if (now - motionStart > config.motionTimeout + 5000) {
-                sleepSystem();
+                // Ensure PIR line is quiet before sleeping (prevents immediate wake)
+                if (digitalRead(PIN_PIR) == LOW) {
+                    sleepSystem();
+                } else {
+                    motionStart = now; // Stay awake a bit longer
+                }
             }
         }
     }
@@ -369,17 +380,22 @@ void processCommand(const char* line) {
             manual_override_start = now;
             Serial.print(F("Manual Override: ")); Serial.println(manual_override);
         }
-        else if (cmd == 's') { // Set Param (e.g. sM 4.2)
+        else if (cmd == 's' && strlen(line) > 2) { // Set Param (e.g. sM 4.2)
             char param = line[1];
             float val = atof(&line[2]);
-            if (param == 'M') { config.batMaxV = val; }
-            else if (param == 'm') { config.batMinV = val; }
-            else if (param == 'F') { config.batFloatV = val; }
-            else if (param == 'T') { config.motionTimeout = (long)val; }
-            else if (param == 'X') { config.ledMaxPWM = (int)val; }
-            else if (param == 'D') { config.ledDimPWM = (int)val; }
-            saveConfig();
-            Serial.print(F("Param ")); Serial.print(param); Serial.println(F(" Saved"));
+            bool changed = false;
+            if (param == 'M' && config.batMaxV != val) { config.batMaxV = val; changed = true; }
+            else if (param == 'm' && config.batMinV != val) { config.batMinV = val; changed = true; }
+            else if (param == 'F' && config.batFloatV != val) { config.batFloatV = val; changed = true; }
+            else if (param == 'T' && config.motionTimeout != (long)val) { config.motionTimeout = (long)val; changed = true; }
+            else if (param == 'X' && config.ledMaxPWM != (int)val) { config.ledMaxPWM = (int)val; changed = true; }
+            else if (param == 'D' && config.ledDimPWM != (int)val) { config.ledDimPWM = (int)val; changed = true; }
+
+            if (changed) {
+                validateConfig();
+                saveConfig();
+                Serial.print(F("Param ")); Serial.print(param); Serial.println(F(" Saved"));
+            }
         }
         else if (cmd == 'v') { // View Stats (Sim only)
             #ifdef SIMULATION
@@ -398,7 +414,7 @@ void processCommand(const char* line) {
             Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
             Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
         }
-        else if (cmd == 'S') { // Manual Stage Force (for testing)
+        else if (cmd == 'S' && strlen(line) > 1) { // Manual Stage Force (for testing)
             char stage = line[1];
             if (stage == 'B' || stage == 'A' || stage == 'F') {
                 current_charge_stage = stage;
@@ -414,6 +430,35 @@ void processCommand(const char* line) {
 
 // --- Support Functions ---
 
+void validateConfig() {
+    // Hard limits for Li-ion/LiFePO4 safety
+    if (config.batMinV < 2.50f) config.batMinV = 2.50f;
+    if (config.batMinV > 3.50f) config.batMinV = 3.50f;
+    if (config.batMaxV > 4.50f) config.batMaxV = 4.50f;
+    if (config.batMaxV < 3.00f) config.batMaxV = 3.00f;
+
+    // Ensure Vmin < Vfloat < Vmax with mandatory separation
+    if (config.batMaxV < config.batMinV + 0.5f) {
+        config.batMaxV = config.batMinV + 0.5f;
+    }
+
+    // Float must be between Min and Max
+    if (config.batFloatV > config.batMaxV - 0.1f) {
+        config.batFloatV = config.batMaxV - 0.1f;
+    }
+    if (config.batFloatV < config.batMinV + 0.1f) {
+        config.batFloatV = config.batMinV + 0.1f;
+    }
+
+    // PWM sanity
+    config.ledMaxPWM = constrain(config.ledMaxPWM, 10, 255);
+    config.ledDimPWM = constrain(config.ledDimPWM, 0, config.ledMaxPWM - 5);
+
+    // Timeout sanity
+    if (config.motionTimeout < 1000) config.motionTimeout = 1000;
+    if (config.motionTimeout > 3600000) config.motionTimeout = 3600000;
+}
+
 void loadConfig() {
     EEPROM.get(0, config);
     if (config.magic != MAGIC_TOKEN) {
@@ -425,14 +470,18 @@ void loadConfig() {
         config.ledMaxPWM = DEF_LED_MAX_PWM;
         config.ledDimPWM = DEF_LED_DIM_PWM;
         config.motionTimeout = DEF_MOTION_TIMEOUT_MS;
+        validateConfig();
         saveConfig();
-        Serial.println(F("EEPROM: Using Defaults"));
+        Serial.println(F("EEPROM: Initialized Defaults"));
     } else {
+        validateConfig(); // Ensure persistent values are still sane
         Serial.println(F("EEPROM: Loaded Config"));
     }
 }
 
 void saveConfig() {
+    // EEPROM.put internally uses update() logic on modern Arduino cores,
+    // only writing bytes that have changed.
     EEPROM.put(0, config);
 }
 
@@ -451,24 +500,25 @@ void readSensors() {
     sys.batV = rawBat * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
 
     // 2. Current Inference (Non-linear Model)
-    // Model: Vsolar * Duty = Vbat + V_diode + (Iout * R_conv)
-    // Ipanel = Iout * Duty
-    // Solving for Ipanel:
-    // Iout = (Vsolar * Duty - Vbat - V_diode) / R_conv
+    // Non-ideal Buck: Vbat = (Vsolar * Duty) - (Iout * R_conv) - Vdiode * (1 - Duty)
+    // Solving for Iout:
+    // Iout = (Vsolar * Duty - Vbat - Vdiode * (1 - Duty)) / R_conv
     // Ipanel = Iout * Duty
 
-    float duty = (float)sys.mpptPWM / 1023.0f;
+    float duty = (float)OCR1A / 1023.0f;
 
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
+        if (sys.solarI < 0) sys.solarI = 0; // Harvest only
         sys.solarP_mW = sys.solarV * sys.solarI;
     } else if (duty > INFERENCE_MIN_DUTY) {
-        // Inference logic
-        float numerator = (sys.solarV * duty) - sys.batV - model_V_diode;
+        // Inference logic (Physically derived)
+        float V_comp = sys.batV + model_V_diode * (1.0f - duty);
+        float numerator = (sys.solarV * duty) - V_comp;
         if (numerator < 0) numerator = 0;
 
         float inferred_Iout = numerator / model_R_conv; // Amps
-        if (inferred_Iout > 10.0f) inferred_Iout = 10.0f; // Safety clamp
+        if (inferred_Iout > 10.0f) inferred_Iout = 10.0f; // Logic clamp
         sys.solarI = inferred_Iout * duty * 1000.0f;    // mA
         sys.solarP_mW = sys.solarV * sys.solarI;
     } else {
@@ -499,7 +549,7 @@ void performCalibration() {
     Serial.println(F("CALIB: Starting Thermal Re-Calibration"));
 
     // 1. Measure Open Circuit Voltage (Voc)
-    int oldPWM = OCR1A;
+    int oldPWM = sys.mpptPWM;
     OCR1A = 0;
     delay(100); // Wait for transient
     readSensors();
@@ -540,7 +590,7 @@ void performCalibration() {
     }
 
     OCR1A = oldPWM;
-    lastCalib = millis();
+    prevSolarV = -1.0f; // Force tracker reset after transient
 }
 
 void updateMPPT() {
@@ -548,7 +598,7 @@ void updateMPPT() {
     if (sys.solarV < SOLAR_START_V || sys.isDark) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'N';
-        current_charge_stage = 'B';
+        // Note: charge stage is preserved through brief solar dips
         OCR1A = 0;
         return;
     }
@@ -574,6 +624,7 @@ void updateMPPT() {
         if (sys.batV >= config.batMaxV) {
             current_charge_stage = 'A'; // To Absorption
             sys.absorptionStart = millis();
+            prevSolarV = -1.0f; // Reset trackers on stage change
         } else {
             runSMCMPPT();
         }
@@ -587,18 +638,24 @@ void updateMPPT() {
             if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
 
-        // Transition to Float after current drops (Tail Current) or timeout
-        // Inferred battery current: Ibat = Isolar / Duty
-        float duty = (float)sys.mpptPWM / 1023.0f;
+        // Transition to Float after current drops (Tail Current) or timeout.
+        // Battery current is inferred from the converter model: Ibat = Isolar / Duty.
+        // NOTE: In sensorless mode, this is a HEURISTIC based on inferred power.
+        // It helps prevent overcharging if Absorption is sustained too long.
+        float duty = (float)OCR1A / 1023.0f;
         float batCurrentMA = (duty > 0.1f) ? (sys.solarI / duty) : 0;
 
-        bool tail_current_reached = (ina219_present && batCurrentMA < TAIL_CURRENT_MA && batCurrentMA > 0);
-        bool timeout_reached = (millis() - sys.absorptionStart > ABSORPTION_TIMEOUT_MS);
+        bool is_tail_current_heuristic = (batCurrentMA < TAIL_CURRENT_MA && batCurrentMA > 0);
+        bool is_abs_timeout = (millis() - sys.absorptionStart > ABSORPTION_TIMEOUT_MS);
 
-        if (tail_current_reached || timeout_reached) {
+        if (is_tail_current_heuristic || is_abs_timeout) {
             current_charge_stage = 'F';
+            prevSolarV = -1.0f;
         }
-        if (sys.batV < config.batMinV + REBULK_ABS_DELTA) current_charge_stage = 'B'; // Deep discharge
+        if (sys.batV < config.batMinV + REBULK_ABS_DELTA) {
+            current_charge_stage = 'B'; // Deep discharge
+            prevSolarV = -1.0f;
+        }
     }
     else if (current_charge_stage == 'F') { // Float
         sys.chargeMode = 'F';
@@ -607,7 +664,10 @@ void updateMPPT() {
         } else if (sys.batV < config.batFloatV - FLOAT_REG_MARGIN) {
             if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
-        if (sys.batV < config.batFloatV - REBULK_FLOAT_DELTA) current_charge_stage = 'B'; // Re-bulk
+        if (sys.batV < config.batFloatV - REBULK_FLOAT_DELTA) {
+            current_charge_stage = 'B'; // Re-bulk
+            prevSolarV = -1.0f;
+        }
     }
 
     // MPPT PWM is now 10-bit (0-1023)
@@ -682,11 +742,12 @@ void updateLight() {
     }
     else if (sys.isMotion) {
         if (now - motionStart < config.motionTimeout) {
-            // Adaptive Brightness
-            int adaptive_max = map(constrain(motion_intensity, 1, 5), 1, 5, (config.ledMaxPWM/2), config.ledMaxPWM);
-            int bat_limit = map(constrain(sys.batV * 100, config.batMinV * 100, config.batMaxV * 100),
-                                config.batMinV * 100, config.batMaxV * 100, config.ledDimPWM, adaptive_max);
-            sys.ledPWM = constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
+            // Adaptive Brightness (Float-based for smoothness)
+            float intensity_scale = mapFloat(constrain(motion_intensity, 1, 5), 1, 5, 0.5f, 1.0f);
+            float adaptive_max = config.ledMaxPWM * intensity_scale;
+
+            float bat_limit = mapFloat(sys.batV, config.batMinV, config.batMaxV, config.ledDimPWM, adaptive_max);
+            sys.ledPWM = (int)constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
 
             if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > MOTION_CHECK_INTERVAL_MS)) {
                 motion_intensity = constrain(motion_intensity + 1, 0, 10);
@@ -720,29 +781,19 @@ void sleepSystem() {
     OCR1A = 0; // MPPT 10-bit PWM off
 
     // Peripheral Shutdown
-    ADCSRA &= ~(1 << ADEN); // ADC off
+    power_all_disable();
 
     // WDT for periodic health check (8s)
     configureWDT();
 
     // INT0 for PIR wake
-    // For SLEEP_MODE_PWR_DOWN, only LEVEL interrupts on INT0/INT1 work reliably
-    // for waking up. We'll use LOW level, assuming PIR is active-high and
-    // we use a pull-down or it drives high. Wait, many PIRs are active high.
-    // If PIR is active high (RISING), we can't easily wake from PWR_DOWN
-    // with INT0 EDGE mode.
-
-    // Alternative: Use SLEEP_MODE_IDLE or PCINT.
-    // Given ATmega328P constraints:
-    // Let's use LOW LEVEL interrupt for wake.
-    EICRA &= ~((1 << ISC01) | (1 << ISC00)); // 00 -> LOW LEVEL
-    EIFR = (1 << INTF0);  // Clear flags
-    EIMSK |= (1 << INT0); // Enable INT0
+    // Use LOW level for reliable PWR_DOWN wake on older AVRs.
+    EICRA &= ~((1 << ISC01) | (1 << ISC00));
+    EIFR = (1 << INTF0);
+    EIMSK |= (1 << INT0);
 
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
     sleep_enable();
-
-    // Enable Global Interrupts (just in case they were off)
     sei();
 
     sleep_cpu(); // HALT
@@ -750,19 +801,28 @@ void sleepSystem() {
     // --- WAKE UP ---
     sleep_disable();
     disableWDT();
-    ADCSRA |= (1 << ADEN); // ADC on
+    power_all_enable();
+
+    // Restore Serial
+    Serial.begin(115200);
 
     // Reconfigure INT0 for RISING edge for normal awake operation
     EICRA = (1 << ISC01) | (1 << ISC00);
+    EIFR = (1 << INTF0);
+    EIMSK |= (1 << INT0);
 
+    prevSolarV = -1.0f; // Force MPPT reset after sleep gap
     Serial.println(F("SLEEP: Woke up"));
 }
 
 void configureWDT() {
     cli();
     wdt_reset();
-    WDTCSR |= (1 << WDCE) | (1 << WDE);
-    // Interrupt mode, 8.0s timeout
+    // Clear WDRF in MCUSR
+    MCUSR &= ~(1 << WDRF);
+    // Write 1 to WDCE and WDE to allow changes
+    WDTCSR = (1 << WDCE) | (1 << WDE);
+    // Set new watchdog timeout value and enable interrupt mode (not reset)
     WDTCSR = (1 << WDIE) | (1 << WDP3) | (1 << WDP0);
     sei();
 }

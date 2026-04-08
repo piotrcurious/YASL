@@ -88,6 +88,9 @@ void sleep_cpu();
 #define wdt_reset()
 void wdt_disable();
 
+#define power_all_disable()
+#define power_all_enable()
+
 // Standard Arduino functions
 unsigned long millis();
 void delay(unsigned long ms);
