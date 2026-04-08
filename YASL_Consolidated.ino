@@ -292,7 +292,12 @@ void loop() {
         // Deep sleep if idle
         if (!sys.isMotion && sys.ledPWM <= config.ledDimPWM && !manual_override) {
             if (now - motionStart > config.motionTimeout + 5000) {
-                sleepSystem();
+                // Ensure PIR line is quiet before sleeping (prevents immediate wake)
+                if (digitalRead(PIN_PIR) == LOW) {
+                    sleepSystem();
+                } else {
+                    motionStart = now; // Stay awake a bit longer
+                }
             }
         }
     }
@@ -495,25 +500,25 @@ void readSensors() {
     sys.batV = rawBat * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
 
     // 2. Current Inference (Non-linear Model)
-    // Model: Vsolar * Duty = Vbat + V_diode + (Iout * R_conv)
-    // Ipanel = Iout * Duty
-    // Solving for Ipanel:
-    // Iout = (Vsolar * Duty - Vbat - V_diode) / R_conv
+    // Non-ideal Buck: Vbat = (Vsolar * Duty) - (Iout * R_conv) - Vdiode * (1 - Duty)
+    // Solving for Iout:
+    // Iout = (Vsolar * Duty - Vbat - Vdiode * (1 - Duty)) / R_conv
     // Ipanel = Iout * Duty
 
-    float duty = (float)OCR1A / 1023.0f; // Use actual hardware duty for inference
+    float duty = (float)OCR1A / 1023.0f;
 
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
         if (sys.solarI < 0) sys.solarI = 0; // Harvest only
         sys.solarP_mW = sys.solarV * sys.solarI;
     } else if (duty > INFERENCE_MIN_DUTY) {
-        // Inference logic
-        float numerator = (sys.solarV * duty) - sys.batV - model_V_diode;
+        // Inference logic (Physically derived)
+        float V_comp = sys.batV + model_V_diode * (1.0f - duty);
+        float numerator = (sys.solarV * duty) - V_comp;
         if (numerator < 0) numerator = 0;
 
         float inferred_Iout = numerator / model_R_conv; // Amps
-        if (inferred_Iout > 10.0f) inferred_Iout = 10.0f; // Safety clamp
+        if (inferred_Iout > 10.0f) inferred_Iout = 10.0f; // Logic clamp
         sys.solarI = inferred_Iout * duty * 1000.0f;    // mA
         sys.solarP_mW = sys.solarV * sys.solarI;
     } else {
@@ -593,7 +598,7 @@ void updateMPPT() {
     if (sys.solarV < SOLAR_START_V || sys.isDark) {
         sys.mpptPWM = 0;
         sys.chargeMode = 'N';
-        current_charge_stage = 'B';
+        // Note: charge stage is preserved through brief solar dips
         OCR1A = 0;
         return;
     }
@@ -737,11 +742,12 @@ void updateLight() {
     }
     else if (sys.isMotion) {
         if (now - motionStart < config.motionTimeout) {
-            // Adaptive Brightness
-            int adaptive_max = map(constrain(motion_intensity, 1, 5), 1, 5, (config.ledMaxPWM/2), config.ledMaxPWM);
-            int bat_limit = map(constrain(sys.batV * 100, config.batMinV * 100, config.batMaxV * 100),
-                                config.batMinV * 100, config.batMaxV * 100, config.ledDimPWM, adaptive_max);
-            sys.ledPWM = constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
+            // Adaptive Brightness (Float-based for smoothness)
+            float intensity_scale = mapFloat(constrain(motion_intensity, 1, 5), 1, 5, 0.5f, 1.0f);
+            float adaptive_max = config.ledMaxPWM * intensity_scale;
+
+            float bat_limit = mapFloat(sys.batV, config.batMinV, config.batMaxV, config.ledDimPWM, adaptive_max);
+            sys.ledPWM = (int)constrain(bat_limit, config.ledDimPWM, config.ledMaxPWM);
 
             if (digitalRead(PIN_PIR) == HIGH && (now - last_motion_check > MOTION_CHECK_INTERVAL_MS)) {
                 motion_intensity = constrain(motion_intensity + 1, 0, 10);
@@ -775,29 +781,19 @@ void sleepSystem() {
     OCR1A = 0; // MPPT 10-bit PWM off
 
     // Peripheral Shutdown
-    ADCSRA &= ~(1 << ADEN); // ADC off
+    power_all_disable();
 
     // WDT for periodic health check (8s)
     configureWDT();
 
     // INT0 for PIR wake
-    // For SLEEP_MODE_PWR_DOWN, only LEVEL interrupts on INT0/INT1 work reliably
-    // for waking up. We'll use LOW level, assuming PIR is active-high and
-    // we use a pull-down or it drives high. Wait, many PIRs are active high.
-    // If PIR is active high (RISING), we can't easily wake from PWR_DOWN
-    // with INT0 EDGE mode.
-
-    // Alternative: Use SLEEP_MODE_IDLE or PCINT.
-    // Given ATmega328P constraints:
-    // Let's use LOW LEVEL interrupt for wake.
-    EICRA &= ~((1 << ISC01) | (1 << ISC00)); // 00 -> LOW LEVEL
-    EIFR = (1 << INTF0);  // Clear flags
-    EIMSK |= (1 << INT0); // Enable INT0
+    // Use LOW level for reliable PWR_DOWN wake on older AVRs.
+    EICRA &= ~((1 << ISC01) | (1 << ISC00));
+    EIFR = (1 << INTF0);
+    EIMSK |= (1 << INT0);
 
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
     sleep_enable();
-
-    // Enable Global Interrupts (just in case they were off)
     sei();
 
     sleep_cpu(); // HALT
@@ -805,12 +801,15 @@ void sleepSystem() {
     // --- WAKE UP ---
     sleep_disable();
     disableWDT();
-    ADCSRA |= (1 << ADEN); // ADC on
+    power_all_enable();
+
+    // Restore Serial
+    Serial.begin(115200);
 
     // Reconfigure INT0 for RISING edge for normal awake operation
     EICRA = (1 << ISC01) | (1 << ISC00);
-    EIFR = (1 << INTF0);  // Clear stale flags
-    EIMSK |= (1 << INT0); // Re-enable
+    EIFR = (1 << INTF0);
+    EIMSK |= (1 << INT0);
 
     prevSolarV = -1.0f; // Force MPPT reset after sleep gap
     Serial.println(F("SLEEP: Woke up"));
@@ -819,8 +818,11 @@ void sleepSystem() {
 void configureWDT() {
     cli();
     wdt_reset();
-    WDTCSR |= (1 << WDCE) | (1 << WDE);
-    // Interrupt mode, 8.0s timeout
+    // Clear WDRF in MCUSR
+    MCUSR &= ~(1 << WDRF);
+    // Write 1 to WDCE and WDE to allow changes
+    WDTCSR = (1 << WDCE) | (1 << WDE);
+    // Set new watchdog timeout value and enable interrupt mode (not reset)
     WDTCSR = (1 << WDIE) | (1 << WDP3) | (1 << WDP0);
     sei();
 }
