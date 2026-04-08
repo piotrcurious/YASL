@@ -165,6 +165,7 @@ void processCommand(const char* line);
 void sleepSystem();
 void configureWDT();
 void disableWDT();
+void restoreHardware();
 float getSmoothedADC(uint8_t pin);
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
 
@@ -186,17 +187,12 @@ ISR(WDT_vect) {
 // --- Arduino Core ---
 
 void setup() {
-    // Immediate safe states
-    pinMode(PIN_MPPT_PWM, OUTPUT);
-    digitalWrite(PIN_MPPT_PWM, LOW);
-    pinMode(PIN_LED_PWM, OUTPUT);
-    digitalWrite(PIN_LED_PWM, LOW);
-
-    pinMode(PIN_PIR, INPUT_PULLUP);
+    // Immediate hardware config
+    restoreHardware();
 
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v1.7 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v1.8 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -208,16 +204,6 @@ void setup() {
         Serial.println(F("INA219 OK"));
         ina219_present = true;
     }
-
-    // --- High Frequency 10-bit PWM for MPPT (Timer1) ---
-    // Pin 9 (OC1A)
-    TCCR1A = _BV(COM1A1) | _BV(WGM11); // Fast PWM, non-inverting, mode 14
-    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10); // mode 14, no prescaler
-    ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
-    OCR1A = 0;
-
-    // Set Timer2 (pins 3, 11) for ~976Hz PWM
-    TCCR2B = (TCCR2B & 0b11111000) | 0x04;
 
     disableWDT();
     readSensors();
@@ -606,27 +592,29 @@ void performCalibration() {
 }
 
 void updateMPPT() {
-    // Safety & Night check
+    // 1. Overvoltage Protection (Priority 1)
+    if (sys.batV > config.batMaxV + BAT_OVERVOLT_MARGIN) {
+        sys.mpptPWM = 0;
+        sys.chargeMode = 'X';
+        OCR1A = 0;
+        return;
+    }
+
+    // 2. Safety & Night check
     if (sys.solarV < SOLAR_START_V || sys.isDark) {
         sys.mpptPWM = 0;
-        sys.chargeMode = 'N';
+        if (sys.isDark) sys.chargeMode = 'N';
+        else sys.chargeMode = 'L'; // Low solar
+
         // Note: charge stage is preserved through brief solar dips
         OCR1A = 0;
         return;
     }
 
-    // MPPT Startup Kick: If idle but solar is present, give it a nudge
+    // 3. MPPT Startup Kick: If idle but solar is present, give it a nudge
     if (sys.mpptPWM == 0 && sys.solarV > SOLAR_START_V) {
         sys.mpptPWM = SOLAR_KICK_PWM;
         OCR1A = sys.mpptPWM;
-        return;
-    }
-
-    // Overvoltage Protection
-    if (sys.batV > config.batMaxV + BAT_OVERVOLT_MARGIN) {
-        sys.mpptPWM = 0;
-        sys.chargeMode = 'X';
-        OCR1A = 0;
         return;
     }
     // Mode 'X' recovery: if we were in mode X but voltage is now safe,
@@ -729,6 +717,9 @@ void runSMCMPPT() {
         } else {
             // Small perturbation if dv is zero
             sys.mpptPWM += (int)SMC_BASE_GAIN;
+            // Update trackers even during perturbation to keep gradients fresh
+            prevSolarV = sys.solarV;
+            prevSolarP = sys.solarP_mW;
         }
         lastMppt = now;
     }
@@ -746,7 +737,7 @@ void updateLight() {
         sys.ledPWM = PWM_LED_OFF;
         motion_intensity = 0;
         Serial.println(F("LVD: Active"));
-    } else if (lvd_active && sys.batV > BAT_RECONNECT_V) {
+    } else if (lvd_active && sys.batV > config.batMinV + 0.25f) {
         lvd_active = false;
         Serial.println(F("LVD: Recovered"));
     }
@@ -821,6 +812,7 @@ void sleepSystem() {
     power_all_enable();
 
     // Restore Peripherals
+    restoreHardware(); // Ensure timers/pinmodes are back
     Serial.begin(115200);
     Wire.begin();
     if (ina219_present) {
@@ -858,6 +850,24 @@ void disableWDT() {
     WDTCSR |= (1 << WDCE) | (1 << WDE);
     WDTCSR = 0x00;
     sei();
+}
+
+void restoreHardware() {
+    pinMode(PIN_MPPT_PWM, OUTPUT);
+    digitalWrite(PIN_MPPT_PWM, LOW);
+    pinMode(PIN_LED_PWM, OUTPUT);
+    digitalWrite(PIN_LED_PWM, LOW);
+    pinMode(PIN_PIR, INPUT_PULLUP);
+
+    // --- High Frequency 10-bit PWM for MPPT (Timer1) ---
+    // Pin 9 (OC1A)
+    TCCR1A = _BV(COM1A1) | _BV(WGM11); // Fast PWM, non-inverting, mode 14
+    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10); // mode 14, no prescaler
+    ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
+    OCR1A = sys.mpptPWM;
+
+    // Set Timer2 (pins 3, 11) for ~976Hz PWM
+    TCCR2B = (TCCR2B & 0b11111000) | 0x04;
 }
 
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
