@@ -218,7 +218,7 @@ void setup() {
 
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v1.2 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v1.6 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -248,10 +248,13 @@ void setup() {
 void checkAndInitiateSleep() {
     bool shouldSleep = false;
 
+    // Do not sleep if user is actively using the lamp via override or motion
+    if (manual_override || sys.isMotion) return;
+
     if (sys.batPcnt < BAT_LOW_SLEEP_PCNT && sys.isDark) {
         shouldSleep = true;
         Serial.println(F("Low battery, initiating timed sleep."));
-    } else if (sys.isDark && sys.ledPWM <= config.ledDimPWM && !sys.isMotion &&
+    } else if (sys.isDark && sys.ledPWM <= config.ledDimPWM &&
                (millis() - motionStart > SLEEP_IDLE_TIMEOUT_MS)) {
         shouldSleep = true;
         Serial.println(F("Dark and idle, initiating timed sleep."));
@@ -377,74 +380,75 @@ void processCommand(const char* line) {
     if (strlen(line) == 0) return;
     unsigned long now = millis();
     char cmd = line[0];
-        if (cmd == 'd') { // Diagnostics
-            Serial.println(F("--- DIAGNOSTICS ---"));
-            Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
-            Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
-            Serial.print(F("Mode: ")); Serial.println(sys.chargeMode);
-            Serial.print(F("Intensity: ")); Serial.println(motion_intensity);
-            #ifdef SIMULATION
-            Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
-            Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
-            #endif
-        }
-        else if (cmd == 'c') { // View Config
-            Serial.println(F("--- CONFIG ---"));
-            Serial.print(F("BatMax: ")); Serial.println(config.batMaxV);
-            Serial.print(F("BatMin: ")); Serial.println(config.batMinV);
-            Serial.print(F("LEDMax: ")); Serial.println(config.ledMaxPWM);
-            Serial.print(F("Timeout: ")); Serial.println(config.motionTimeout);
-        }
-        else if (cmd == 'm') { // Manual Light Toggle
-            manual_override = !manual_override;
-            sys.isMotion = manual_override;
-            motionStart = now;
-            manual_override_start = now;
-            Serial.print(F("Manual Override: ")); Serial.println(manual_override);
-        }
-        else if (cmd == 's' && strlen(line) > 2) { // Set Param (e.g. sM 4.2)
-            char param = line[1];
-            float val = atof(&line[2]);
-            bool changed = false;
-            if (param == 'M' && config.batMaxV != val) { config.batMaxV = val; changed = true; }
-            else if (param == 'm' && config.batMinV != val) { config.batMinV = val; changed = true; }
-            else if (param == 'F' && config.batFloatV != val) { config.batFloatV = val; changed = true; }
-            else if (param == 'T' && config.motionTimeout != (long)val) { config.motionTimeout = (long)val; changed = true; }
-            else if (param == 'X' && config.ledMaxPWM != (int)val) { config.ledMaxPWM = (int)val; changed = true; }
-            else if (param == 'D' && config.ledDimPWM != (int)val) { config.ledDimPWM = (int)val; changed = true; }
 
-            if (changed) {
-                validateConfig();
-                saveConfig();
-                Serial.print(F("Param ")); Serial.print(param); Serial.println(F(" Saved"));
-            }
+    if (cmd == 'd') { // Diagnostics
+        Serial.println(F("--- DIAGNOSTICS ---"));
+        Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
+        Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
+        Serial.print(F("Mode: ")); Serial.println(sys.chargeMode);
+        Serial.print(F("Intensity: ")); Serial.println(motion_intensity);
+        #ifdef SIMULATION
+        Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
+        Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
+        #endif
+    }
+    else if (cmd == 'c') { // View Config
+        Serial.println(F("--- CONFIG ---"));
+        Serial.print(F("BatMax: ")); Serial.println(config.batMaxV);
+        Serial.print(F("BatMin: ")); Serial.println(config.batMinV);
+        Serial.print(F("LEDMax: ")); Serial.println(config.ledMaxPWM);
+        Serial.print(F("Timeout: ")); Serial.println(config.motionTimeout);
+    }
+    else if (cmd == 'm') { // Manual Light Toggle
+        manual_override = !manual_override;
+        sys.isMotion = manual_override;
+        motionStart = now;
+        manual_override_start = now;
+        Serial.print(F("Manual Override: ")); Serial.println(manual_override);
+    }
+    else if (cmd == 's' && strlen(line) > 2) { // Set Param (e.g. sM 4.2)
+        char param = line[1];
+        float val = atof(&line[2]);
+        bool changed = false;
+        if (param == 'M' && config.batMaxV != val) { config.batMaxV = val; changed = true; }
+        else if (param == 'm' && config.batMinV != val) { config.batMinV = val; changed = true; }
+        else if (param == 'F' && config.batFloatV != val) { config.batFloatV = val; changed = true; }
+        else if (param == 'T' && config.motionTimeout != (long)val) { config.motionTimeout = (long)val; changed = true; }
+        else if (param == 'X' && config.ledMaxPWM != (int)val) { config.ledMaxPWM = (int)val; changed = true; }
+        else if (param == 'D' && config.ledDimPWM != (int)val) { config.ledDimPWM = (int)val; changed = true; }
+
+        if (changed) {
+            validateConfig();
+            saveConfig();
+            Serial.print(F("Param ")); Serial.print(param); Serial.println(F(" Saved"));
         }
-        else if (cmd == 'v') { // View Stats (Sim only)
-            #ifdef SIMULATION
-            Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
-            Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
-            #endif
+    }
+    else if (cmd == 'v') { // View Stats (Sim only)
+        #ifdef SIMULATION
+        Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
+        Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
+        #endif
+    }
+    else if (cmd == 'r') { // Reset Defaults
+        config.magic = 0;
+        loadConfig();
+        Serial.println(F("Config Reset"));
+    }
+    else if (cmd == 'h' || cmd == '?') {
+        Serial.println(F("--- HELP ---"));
+        Serial.println(F("d: Diag, c: Config, m: Toggle Override, v: Stats"));
+        Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
+        Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
+    }
+    else if (cmd == 'S' && strlen(line) > 1) { // Manual Stage Force (for testing)
+        char stage = line[1];
+        if (stage == 'B' || stage == 'A' || stage == 'F') {
+            current_charge_stage = stage;
+            Serial.print(F("Stage forced to: ")); Serial.println(stage);
+        } else {
+            Serial.println(F("Invalid stage. Use B, A, or F."));
         }
-        else if (cmd == 'r') { // Reset Defaults
-            config.magic = 0;
-            loadConfig();
-            Serial.println(F("Config Reset"));
-        }
-        else if (cmd == 'h' || cmd == '?') {
-            Serial.println(F("--- HELP ---"));
-            Serial.println(F("d: Diag, c: Config, m: Toggle Override, v: Stats"));
-            Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
-            Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
-        }
-        else if (cmd == 'S' && strlen(line) > 1) { // Manual Stage Force (for testing)
-            char stage = line[1];
-            if (stage == 'B' || stage == 'A' || stage == 'F') {
-                current_charge_stage = stage;
-                Serial.print(F("Stage forced to: ")); Serial.println(stage);
-            } else {
-                Serial.println(F("Invalid stage. Use B, A, or F."));
-            }
-        }
+    }
     else if (cmd == 'k') { // Force Calibration
         performCalibration();
     }
@@ -566,53 +570,50 @@ float getSmoothedADC(uint8_t pin) {
 
 void performCalibration() {
     lastCalib = millis();
-    if (ina219_present) return; // Not needed if we have direct current sensing
+    if (ina219_present) return;
 
-    Serial.println(F("CALIB: Starting Thermal Re-Calibration"));
+    Serial.println(F("CALIB: Sampling..."));
 
-    // 1. Measure Open Circuit Voltage (Voc)
+    // 1. Measure Voc (Averaged)
     int oldPWM = sys.mpptPWM;
     OCR1A = 0;
-    delay(100); // Wait for transient
-    readSensors();
-    float Voc = sys.solarV;
+    delay(150);
+    float sumVoc = 0;
+    for(int i=0; i<5; i++) { readSensors(); sumVoc += sys.solarV; delay(20); }
+    float Voc = sumVoc / 5.0f;
 
-    // 2. Sample at a known high duty point
+    // 2. Measure Under Load (Averaged)
     OCR1A = CALIB_DUTY_RAW;
-    delay(100);
-    readSensors();
-    float Vpanel = sys.solarV;
-    float Vbat = sys.batV;
+    delay(150);
+    float sumVp = 0, sumVb = 0;
+    for(int i=0; i<5; i++) { readSensors(); sumVp += sys.solarV; sumVb += sys.batV; delay(20); }
+    float Vpanel = sumVp / 5.0f;
+    float Vbat = sumVb / 5.0f;
     float D = (float)CALIB_DUTY_RAW / 1023.0f;
 
-    // 3. Estimate Ipanel from panel model
-    // Assuming we know the panel's Isc and behavior somewhat (Vpanel/Voc ratio)
-    // or we use the power peak to back-calculate R.
-    // For simplicity, we assume R is the primary unknown that changed with T.
-    // Vbat + V_diode + Iout*R = Vsolar * D
-    // Iout = Ipanel / D
-    // R = (Vsolar * D - Vbat - V_diode) / (Ipanel / D)
-
-    // We'll use a conservative heuristic:
-    // If Vpanel dropped significantly below Voc, we are drawing current.
+    // 3. Heuristic R Estimation
     if (Vpanel < Voc - CALIB_V_DROP_MIN) {
-        // Crude estimation of Ipanel for calibration
-        // I = Isc * (1 - exp(V/Vt - Voc/Vt))
-        float Isc_est = CALIB_ISC_EST;
-        float Vt_est = CALIB_VT_EST;
-        float Ipanel_est = Isc_est * (1.0f - exp((Vpanel - Voc)/Vt_est));
+        float Ipanel_est = CALIB_ISC_EST * (1.0f - exp((Vpanel - Voc) / CALIB_VT_EST));
 
         if (Ipanel_est > 0.1f) {
-            float new_R = ((Vpanel * D) - Vbat - model_V_diode) / (Ipanel_est / D);
-            if (new_R > 0.01f && new_R < 2.0f) {
-                model_R_conv = (model_R_conv * 0.7f) + (new_R * 0.3f); // EMA
-                Serial.print(F("CALIB: New R_conv=")); Serial.println(model_R_conv, 3);
+            // Formula: Vbat = Vsolar*D - Iout*R - Vdiode*(1-D)
+            // Iout = Ipanel / D
+            // R = (Vsolar*D - Vbat - Vdiode*(1-D)) / (Ipanel/D)
+            float V_diode_comp = model_V_diode * (1.0f - D);
+            float new_R = (Vpanel * D - Vbat - V_diode_comp) / (Ipanel_est / D);
+
+            // Reject outliers and large jumps
+            if (new_R > 0.05f && new_R < 1.5f && fabsf(new_R - model_R_conv) < 0.5f) {
+                model_R_conv = (model_R_conv * 0.8f) + (new_R * 0.2f); // Heavier EMA for stability
+                Serial.print(F("CALIB: R_conv=")); Serial.println(model_R_conv, 3);
+            } else {
+                Serial.println(F("CALIB: Rejected Sample"));
             }
         }
     }
 
     OCR1A = oldPWM;
-    prevSolarV = -1.0f; // Force tracker reset after transient
+    prevSolarV = -1.0f;
 }
 
 void updateMPPT() {
@@ -638,6 +639,11 @@ void updateMPPT() {
         sys.chargeMode = 'X';
         OCR1A = 0;
         return;
+    }
+    // Mode 'X' recovery: if we were in mode X but voltage is now safe,
+    // allow returning to normal stage logic.
+    if (sys.chargeMode == 'X' && sys.batV < config.batMaxV) {
+        sys.chargeMode = current_charge_stage;
     }
 
     // 3-Stage Logic
@@ -825,8 +831,15 @@ void sleepSystem() {
     disableWDT();
     power_all_enable();
 
-    // Restore Serial
+    // Restore Peripherals
     Serial.begin(115200);
+    Wire.begin();
+    if (ina219_present) {
+        if (!ina219.begin()) {
+            Serial.println(F("INA219: Recovery Failed"));
+            ina219_present = false;
+        }
+    }
 
     // Reconfigure INT0 for RISING edge for normal awake operation
     EICRA = (1 << ISC01) | (1 << ISC00);
