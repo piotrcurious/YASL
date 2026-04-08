@@ -158,7 +158,10 @@ void validateConfig();
 void saveConfig();
 void readSensors();
 void updateMPPT();
+void runSMCMPPT();
+void performCalibration();
 void updateLight();
+void processCommand(const char* line);
 void sleepSystem();
 void configureWDT();
 void disableWDT();
@@ -172,6 +175,8 @@ Adafruit_INA219 ina219;
 
 ISR(INT0_vect) {
     wakePIR = true;
+    // Disable interrupt to prevent wake loops if line is held LOW
+    EIMSK &= ~(1 << INT0);
 }
 
 ISR(WDT_vect) {
@@ -421,18 +426,22 @@ void processCommand(const char* line) {
 // --- Support Functions ---
 
 void validateConfig() {
-    // Ensure Vmin < Vfloat < Vmax with minimum separation
-    if (config.batMinV < 2.5f) config.batMinV = 2.5f;
-    if (config.batMaxV > 4.5f) config.batMaxV = 4.5f;
+    // Hard limits for Li-ion/LiFePO4 safety
+    if (config.batMinV < 2.50f) config.batMinV = 2.50f;
+    if (config.batMinV > 3.50f) config.batMinV = 3.50f;
+    if (config.batMaxV > 4.50f) config.batMaxV = 4.50f;
+    if (config.batMaxV < 3.00f) config.batMaxV = 3.00f;
 
+    // Ensure Vmin < Vfloat < Vmax with mandatory separation
     if (config.batMaxV < config.batMinV + 0.5f) {
         config.batMaxV = config.batMinV + 0.5f;
     }
 
-    if (config.batFloatV >= config.batMaxV) {
+    // Float must be between Min and Max
+    if (config.batFloatV > config.batMaxV - 0.1f) {
         config.batFloatV = config.batMaxV - 0.1f;
     }
-    if (config.batFloatV <= config.batMinV) {
+    if (config.batFloatV < config.batMinV + 0.1f) {
         config.batFloatV = config.batMinV + 0.1f;
     }
 
@@ -492,10 +501,11 @@ void readSensors() {
     // Iout = (Vsolar * Duty - Vbat - V_diode) / R_conv
     // Ipanel = Iout * Duty
 
-    float duty = (float)sys.mpptPWM / 1023.0f;
+    float duty = (float)OCR1A / 1023.0f; // Use actual hardware duty for inference
 
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
+        if (sys.solarI < 0) sys.solarI = 0; // Harvest only
         sys.solarP_mW = sys.solarV * sys.solarI;
     } else if (duty > INFERENCE_MIN_DUTY) {
         // Inference logic
@@ -623,13 +633,14 @@ void updateMPPT() {
             if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM++;
         }
 
-        // Transition to Float after current drops (Tail Current) or timeout
-        // Inferred battery current: Ibat = Isolar / Duty
-        // NOTE: This is a heuristic estimation of battery charge current.
-        float duty = (float)sys.mpptPWM / 1023.0f;
+        // Transition to Float after current drops (Tail Current) or timeout.
+        // Battery current is inferred from the converter model: Ibat = Isolar / Duty.
+        // NOTE: In sensorless mode, this is a HEURISTIC based on inferred power.
+        // It helps prevent overcharging if Absorption is sustained too long.
+        float duty = (float)OCR1A / 1023.0f;
         float batCurrentMA = (duty > 0.1f) ? (sys.solarI / duty) : 0;
 
-        bool is_tail_current_heuristic = (ina219_present && batCurrentMA < TAIL_CURRENT_MA && batCurrentMA > 0);
+        bool is_tail_current_heuristic = (batCurrentMA < TAIL_CURRENT_MA && batCurrentMA > 0);
         bool is_abs_timeout = (millis() - sys.absorptionStart > ABSORPTION_TIMEOUT_MS);
 
         if (is_tail_current_heuristic || is_abs_timeout) {
@@ -798,6 +809,8 @@ void sleepSystem() {
 
     // Reconfigure INT0 for RISING edge for normal awake operation
     EICRA = (1 << ISC01) | (1 << ISC00);
+    EIFR = (1 << INTF0);  // Clear stale flags
+    EIMSK |= (1 << INT0); // Re-enable
 
     prevSolarV = -1.0f; // Force MPPT reset after sleep gap
     Serial.println(F("SLEEP: Woke up"));
