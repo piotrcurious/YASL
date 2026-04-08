@@ -198,8 +198,11 @@ Adafruit_INA219 ina219;
 
 ISR(INT0_vect) {
     wakePIR = true;
-    // Disable interrupt to prevent wake loops if line is held LOW
-    EIMSK &= ~(1 << INT0);
+    // If in LOW-level mode (for sleep wake), disable to prevent wake-loops.
+    // In RISING-edge mode (for awake operation), keep enabled for re-triggering.
+    if ((EICRA & 0b00000011) == 0) {
+        EIMSK &= ~(1 << INT0);
+    }
 }
 
 ISR(WDT_vect) {
@@ -214,7 +217,7 @@ void setup() {
 
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v1.8 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v2.0 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -373,10 +376,10 @@ void processCommand(const char* line) {
         Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
         Serial.print(F("Mode: ")); Serial.println(sys.chargeMode);
         Serial.print(F("Intensity: ")); Serial.println(motion_intensity);
-        #ifdef SIMULATION
+#ifdef SIMULATION
         Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
         Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
-        #endif
+#endif
     }
     else if (cmd == 'c') { // View Config
         Serial.println(F("--- CONFIG ---"));
@@ -399,7 +402,7 @@ void processCommand(const char* line) {
         if (param == 'M' && config.batMaxV != val) { config.batMaxV = val; changed = true; }
         else if (param == 'm' && config.batMinV != val) { config.batMinV = val; changed = true; }
         else if (param == 'F' && config.batFloatV != val) { config.batFloatV = val; changed = true; }
-        else if (param == 'T' && config.motionTimeout != (long)val) { config.motionTimeout = (long)val; changed = true; }
+        else if (param == 'T' && (long)config.motionTimeout != (long)val) { config.motionTimeout = (long)val; changed = true; }
         else if (param == 'X' && config.ledMaxPWM != (int)val) { config.ledMaxPWM = (int)val; changed = true; }
         else if (param == 'D' && config.ledDimPWM != (int)val) { config.ledDimPWM = (int)val; changed = true; }
 
@@ -410,10 +413,10 @@ void processCommand(const char* line) {
         }
     }
     else if (cmd == 'v') { // View Stats (Sim only)
-        #ifdef SIMULATION
+#ifdef SIMULATION
         Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
         Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
-        #endif
+#endif
     }
     else if (cmd == 'r') { // Reset Defaults
         config.magic = 0;
