@@ -196,7 +196,7 @@ void setup() {
 
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v1.6 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v1.7 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -447,11 +447,11 @@ void validateConfig() {
     }
 
     // Float must be between Min and Max
-    if (config.batFloatV > config.batMaxV - 0.1f) {
-        config.batFloatV = config.batMaxV - 0.1f;
+    if (config.batFloatV > config.batMaxV - 0.15f) {
+        config.batFloatV = config.batMaxV - 0.15f;
     }
-    if (config.batFloatV < config.batMinV + 0.1f) {
-        config.batFloatV = config.batMinV + 0.1f;
+    if (config.batFloatV < config.batMinV + 0.15f) {
+        config.batFloatV = config.batMinV + 0.15f;
     }
 
     // PWM sanity
@@ -555,22 +555,33 @@ void performCalibration() {
     // 1. Measure Voc (Averaged)
     int oldPWM = sys.mpptPWM;
     OCR1A = 0;
-    delay(150);
-    float sumVoc = 0;
-    for(int i=0; i<5; i++) { readSensors(); sumVoc += sys.solarV; delay(20); }
+    delay(250);
+    float sumVoc = 0, voc_sq_sum = 0;
+    for(int i=0; i<5; i++) {
+        readSensors();
+        sumVoc += sys.solarV;
+        voc_sq_sum += (sys.solarV * sys.solarV);
+        delay(30);
+    }
     float Voc = sumVoc / 5.0f;
+    float Voc_var = (voc_sq_sum / 5.0f) - (Voc * Voc);
 
     // 2. Measure Under Load (Averaged)
     OCR1A = CALIB_DUTY_RAW;
-    delay(150);
+    delay(250);
     float sumVp = 0, sumVb = 0;
-    for(int i=0; i<5; i++) { readSensors(); sumVp += sys.solarV; sumVb += sys.batV; delay(20); }
+    for(int i=0; i<5; i++) {
+        readSensors();
+        sumVp += sys.solarV;
+        sumVb += sys.batV;
+        delay(30);
+    }
     float Vpanel = sumVp / 5.0f;
     float Vbat = sumVb / 5.0f;
     float D = (float)CALIB_DUTY_RAW / 1023.0f;
 
-    // 3. Heuristic R Estimation
-    if (Vpanel < Voc - CALIB_V_DROP_MIN) {
+    // 3. Heuristic R Estimation with stability check
+    if (Voc_var < 0.05f && Vpanel < Voc - CALIB_V_DROP_MIN) {
         float Ipanel_est = CALIB_ISC_EST * (1.0f - exp((Vpanel - Voc) / CALIB_VT_EST));
 
         if (Ipanel_est > 0.1f) {
