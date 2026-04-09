@@ -292,6 +292,7 @@ struct SimSensors {
     bool  ina219_ok;
 };
 extern SimSensors sim;
+extern unsigned long current_time_ms;
 void update_sim();
 
 #endif // ARDUINO_MOCK_H

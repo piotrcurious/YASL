@@ -146,6 +146,7 @@ unsigned long lastLog = 0;
 unsigned long motionStart = 0;
 unsigned long lastMppt = 0;
 unsigned long lastCalib = 0;
+unsigned long lastInaRetry = 0;
 
 // Wake Flags
 volatile bool wakePIR = false;
@@ -192,6 +193,7 @@ void setup() {
     // Immediate hardware config
     restoreHardware();
 
+    Wire.begin();
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
     Serial.println(F("YASL CONSOLIDATED v2.0 INIT"));
@@ -479,13 +481,27 @@ void saveConfig() {
 }
 
 void readSensors() {
-    // 1. Connectivity Check (INA219)
+    unsigned long now = millis();
+    // 1. Connectivity Check & Recovery (INA219)
     if (ina219_present) {
         Wire.beginTransmission(0x40);
-        if (Wire.endTransmission() != 0) {
+        delay(1);
+        byte error = Wire.endTransmission();
+        if (error != 0) {
             ina219_present = false;
-            Serial.println(F("INA219: Lost connection"));
+            lastInaRetry = now;
+            Serial.print(F("INA219: Lost connection (error "));
+            Serial.print(error);
+            Serial.println(F(")"));
         }
+    } else if (now - lastInaRetry > 30000UL) {
+        // Periodic retry every 30s
+        if (ina219.begin()) {
+            ina219_present = true;
+            prevSolarV = -1.0f; // Reset trackers to account for accuracy change
+            Serial.println(F("INA219: Recovered"));
+        }
+        lastInaRetry = now;
     }
 
     // 2. Raw Voltages
@@ -637,7 +653,7 @@ void updateMPPT() {
         sys.mpptPWM = SOLAR_KICK_PWM;
         OCR1A = sys.mpptPWM;
         prevSolarV = -1.0f; // Ensure trackers reset after kick
-        sys.chargeMode = 'B';
+        sys.chargeMode = current_charge_stage;
         return;
     }
 
@@ -834,11 +850,13 @@ void sleepSystem() {
     restoreHardware(); // Ensure timers/pinmodes are back
     Serial.begin(115200);
     Wire.begin();
-    if (ina219_present) {
-        if (!ina219.begin()) {
-            Serial.println(F("INA219: Recovery Failed"));
-            ina219_present = false;
-        }
+    // Unconditional recovery attempt after wake
+    if (ina219.begin()) {
+        ina219_present = true;
+    } else {
+        Serial.println(F("INA219: Absent after wake"));
+        ina219_present = false;
+        lastInaRetry = millis();
     }
 
     // Reconfigure INT0 for RISING edge for normal awake operation
