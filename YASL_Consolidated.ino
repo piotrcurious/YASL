@@ -45,7 +45,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 
 // Solar & MPPT
 #define SOLAR_START_V           5.0f   // Min voltage to start switching
-#define SOLAR_KICK_PWM          50     // Initial PWM pulse to start induction
+#define SOLAR_KICK_PWM          60     // Initial PWM pulse to start induction (Must be > INFERENCE_MIN_DUTY * 1024)
 #define SOLAR_DARK_V            2.0f   // Bus voltage below which it's night
 #define SOLAR_HYST_V            0.5f   // Hysteresis for day/night transition
 #define MPPT_INTERVAL_MS        100
@@ -397,6 +397,7 @@ void processCommand(const char* line) {
     }
     else if (cmd == 'r') { // Reset Defaults
         config.magic = 0;
+        saveConfig();
         loadConfig();
         Serial.println(F("Config Reset"));
     }
@@ -478,7 +479,16 @@ void saveConfig() {
 }
 
 void readSensors() {
-    // 1. Raw Voltages
+    // 1. Connectivity Check (INA219)
+    if (ina219_present) {
+        Wire.beginTransmission(0x40);
+        if (Wire.endTransmission() != 0) {
+            ina219_present = false;
+            Serial.println(F("INA219: Lost connection"));
+        }
+    }
+
+    // 2. Raw Voltages
     if (ina219_present) {
         float bus = ina219.getBusVoltage_V();
         float shunt = ina219.getShuntVoltage_mV();
@@ -627,12 +637,12 @@ void updateMPPT() {
         sys.mpptPWM = SOLAR_KICK_PWM;
         OCR1A = sys.mpptPWM;
         prevSolarV = -1.0f; // Ensure trackers reset after kick
+        sys.chargeMode = 'B';
         return;
     }
 
     // 3-Stage Logic
     if (current_charge_stage == 'B') { // Bulk (MPPT)
-        sys.chargeMode = 'B';
         if (sys.batV >= config.batMaxV) {
             current_charge_stage = 'A'; // To Absorption
             sys.absorptionStart = millis();
@@ -642,7 +652,6 @@ void updateMPPT() {
         }
     }
     else if (current_charge_stage == 'A') { // Absorption (CV)
-        sys.chargeMode = 'A';
         // Maintain config.batMaxV
         if (sys.batV > config.batMaxV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
@@ -670,7 +679,6 @@ void updateMPPT() {
         }
     }
     else if (current_charge_stage == 'F') { // Float
-        sys.chargeMode = 'F';
         if (sys.batV > config.batFloatV) {
             if (sys.mpptPWM > 0) sys.mpptPWM--;
         } else if (sys.batV < config.batFloatV - FLOAT_REG_MARGIN) {
@@ -681,6 +689,9 @@ void updateMPPT() {
             prevSolarV = -1.0f;
         }
     }
+
+    // Finalize charge mode label for telemetry (resolves lag)
+    sys.chargeMode = current_charge_stage;
 
     // MPPT PWM is now 10-bit (0-1023)
     sys.mpptPWM = constrain(sys.mpptPWM, MPPT_PWM_MIN_RES, MPPT_PWM_MAX_RES);
@@ -874,8 +885,10 @@ void restoreHardware() {
     ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
     OCR1A = sys.mpptPWM;
 
-    // Set Timer2 (pins 3, 11) for ~976Hz PWM
-    TCCR2B = (TCCR2B & 0b11111000) | 0x04;
+    // --- Fully restore Timer2 (Pins 3, 11) ---
+    // Mode 3 (Fast PWM), Prescaler 64
+    TCCR2A = _BV(COM2A1) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
+    TCCR2B = _BV(CS22);
 }
 
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {

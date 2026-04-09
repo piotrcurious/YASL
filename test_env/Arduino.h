@@ -36,6 +36,7 @@ typedef bool boolean;
 #define A5 5
 
 // AVR Registers / Bits for compatibility
+extern int TCCR2A;
 extern int TCCR2B;
 extern int TCCR1A;
 extern int TCCR1B;
@@ -47,6 +48,11 @@ extern int OCR1A;
 #define WGM12 3
 #define WGM13 4
 #define CS10 0
+#define CS22 2
+#define COM2A1 7
+#define COM2B1 5
+#define WGM20 0
+#define WGM21 1
 
 extern int MCUSR;
 extern int WDRF;
