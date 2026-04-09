@@ -4,6 +4,7 @@
 #include "avr/interrupt.h"
 #include "EEPROM.h"
 
+int TCCR2A = 0;
 int TCCR2B = 0;
 int TCCR1A = 0;
 int TCCR1B = 0;
