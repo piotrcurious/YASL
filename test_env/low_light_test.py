@@ -24,15 +24,22 @@ int main() {{
     // Stabilize to Daylight
     sim.solarOCV = 18.0;
     Serial.println("[STABILIZING TO DAYLIGHT]");
-    for(int i=0; i<800; i++) {{ update_sim(); loop(); }}
+    // Debounce is 60s, so we need > 600 loops of 100ms.
+    // Main loop has a 50ms delay + whatever update_sim does.
+    // Actually, loop() in .ino has a 50ms delay. update_sim advances 100ms.
+    // So each loop iteration is effectively 150ms of sim time?
+    // No, delay(50) advances current_time_ms by 50. update_sim advances by 100.
+    // So each iteration is 150ms. 60s / 0.15s = 400 iterations.
+    for(int i=0; i<500; i++) {{ update_sim(); loop(); }}
     Serial.print("Initial Dark State: "); Serial.println(sys.isDark);
+    Serial.print("Initial Mode: "); Serial.println(sys.chargeMode);
 
     // Low light sweep
     Serial.println("[START LOW LIGHT SWEEP]");
-    for (float ocv = 4.0; ocv <= 8.0; ocv += 0.5) {{
+    for (float ocv = 3.0; ocv <= 6.0; ocv += 0.5) {{
         sim.solarOCV = ocv;
         // Run several loops to allow MPPT to track
-        for(int i=0; i<100; i++) {{
+        for(int i=0; i<200; i++) {{
             update_sim();
             loop();
         }}
@@ -46,15 +53,19 @@ int main() {{
     // Dusk transition with debounce check
     Serial.println("[START DUSK TRANSITION]");
     sim.solarOCV = 1.0;
-    for(int i=0; i<1000; i++) {{
+    // OCV 1.0 is below SOLAR_DARK_V (2.0). Debounce should trigger after 60s.
+    // 60s / 0.15s = 400 iterations.
+    for(int i=0; i<600; i++) {{
         update_sim();
         loop();
-        if (i % 200 == 0) {{
-            Serial.print("T+"); Serial.print(i*0.1);
+        if (i % 100 == 0) {{
+            Serial.print("T+"); Serial.print(i*0.15);
             Serial.print("s Mode: "); Serial.print(sys.chargeMode);
             Serial.print(" isDark: "); Serial.println(sys.isDark);
         }}
+        if (sys.isDark && i > 400) break; // Optimization
     }}
+    Serial.print("Final isDark: "); Serial.println(sys.isDark);
 
     return 0;
 }}
