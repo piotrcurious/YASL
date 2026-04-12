@@ -31,10 +31,22 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 
 // --- Tuning & Defaults ---
 
-// System Reference
+// System Reference & Precision Mode
+// Set to true if you have adjusted your voltage dividers for the 1.1V internal reference.
+// INTERNAL mode provides higher precision and Vcc independence.
+// Divider Ratios for 1.1V Internal Ref (Recommended):
+// Bat (4.2V max): 100k / 22k -> Ratio = 5.54 (Vpin = 0.75V)
+// Solar (24V max): 100k / 3.3k -> Ratio = 31.3 (Vpin = 0.76V)
+#define USE_INTERNAL_1V1_REF    false
+
+#define BAT_DIVIDER_RATIO_DEF   3.0f
+#define SOLAR_DIVIDER_RATIO_DEF 4.0f
+#define BAT_DIVIDER_RATIO_INT   5.54f
+#define SOLAR_DIVIDER_RATIO_INT 31.3f
+
 #define REF_VOLTAGE             5.0f
-#define BAT_DIVIDER_RATIO       3.0f
-#define SOLAR_DIVIDER_RATIO     4.0f
+#define BAT_DIVIDER_RATIO       (USE_INTERNAL_1V1_REF ? BAT_DIVIDER_RATIO_INT : BAT_DIVIDER_RATIO_DEF)
+#define SOLAR_DIVIDER_RATIO     (USE_INTERNAL_1V1_REF ? SOLAR_DIVIDER_RATIO_INT : SOLAR_DIVIDER_RATIO_DEF)
 #define ADC_SMOOTHING_SAMPLES   8
 
 // Battery Defaults (Li-Ion/Li-Po typical)
@@ -123,8 +135,7 @@ const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
 
 // Global State
 SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N', 0};
-float current_vcc = REF_VOLTAGE;
-unsigned long lastVccCheck = 0;
+float current_adc_scale = REF_VOLTAGE;
 Config config;
 float current_led_val = 0;
 bool ina219_present = false;
@@ -196,6 +207,10 @@ ISR(WDT_vect) {
 void setup() {
     // Immediate hardware config
     restoreHardware();
+
+#if USE_INTERNAL_1V1_REF
+    analogReference(INTERNAL);
+#endif
 
     Wire.begin();
     Serial.begin(115200);
@@ -499,13 +514,14 @@ void saveConfig() {
 
 void readSensors() {
     unsigned long now = millis();
-
-    // 0. Update VCC Reference (AVR internal bandgap method)
-    // Check every 5s to save power but handle slow battery discharge
-    if (now - lastVccCheck > 5000UL || lastVccCheck == 0) {
-        current_vcc = readVcc();
-        lastVccCheck = now;
-    }
+    // 0. Update ADC Scale
+#if USE_INTERNAL_1V1_REF
+    current_adc_scale = 1.1f;
+#else
+    // Measure Vcc relative to 1.1V bandgap every cycle to ensure precision
+    // if powered directly from battery.
+    current_adc_scale = readVcc();
+#endif
 
     // 1. Connectivity Check & Recovery (INA219)
     if (ina219_present) {
@@ -524,7 +540,7 @@ void readSensors() {
         if (ina219.begin()) {
             ina219_present = true;
             prevSolarV = -1.0f; // Reset trackers to account for accuracy change
-        lastMppt = now;
+            lastMppt = now;
             Serial.println(F("INA219: Recovered"));
         }
         lastInaRetry = now;
@@ -537,11 +553,11 @@ void readSensors() {
         sys.solarV = bus + (shunt / 1000.0f);
     } else {
         float rawSolar = getSmoothedADC(PIN_SOLAR_ADC);
-        sys.solarV = rawSolar * (current_vcc / 1023.0f) * SOLAR_DIVIDER_RATIO;
+        sys.solarV = rawSolar * (current_adc_scale / 1023.0f) * SOLAR_DIVIDER_RATIO;
     }
 
     float rawBat = getSmoothedADC(PIN_BAT_ADC);
-    sys.batV = rawBat * (current_vcc / 1023.0f) * BAT_DIVIDER_RATIO;
+    sys.batV = rawBat * (current_adc_scale / 1023.0f) * BAT_DIVIDER_RATIO;
 
     // 2. Current Inference (Non-linear Model)
     // Non-ideal Buck: Vbat = (Vsolar * Duty) - (Iout * R_conv) - Vdiode * (1 - Duty)
@@ -603,7 +619,7 @@ float readVcc() {
     uint8_t high = ADCH;
     long result = (high << 8) | low;
     // Vcc = 1.1V * 1023 / ADC
-    return 1125.3f / (float)result; // result is mV, output is V
+    return 1125.3f / (float)result; // output is in Volts
 #endif
 }
 

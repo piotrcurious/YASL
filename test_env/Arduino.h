@@ -25,6 +25,10 @@ typedef bool boolean;
 #define OUTPUT 0x1
 #define INPUT_PULLUP 0x2
 
+#define DEFAULT 1
+#define INTERNAL 2
+#define EXTERNAL 3
+
 #define PI 3.1415926535897932384626433832795
 
 // Pin definitions
@@ -100,6 +104,7 @@ void wdt_disable();
 // Standard Arduino functions
 unsigned long millis();
 void delay(unsigned long ms);
+void analogReference(uint8_t mode);
 void pinMode(int pin, int mode);
 void digitalWrite(int pin, int val);
 int digitalRead(int pin);
