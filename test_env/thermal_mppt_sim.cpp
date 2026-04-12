@@ -67,8 +67,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define BAT_LOW_SLEEP_PCNT      40.0f  // Sleep if dark and below this %
 
 // Solar & MPPT
-#define SOLAR_START_V           5.0f   // Min voltage to start switching
-#define SOLAR_KICK_PWM          60     // Initial PWM pulse to start induction (Must be > INFERENCE_MIN_DUTY * 1024)
+#define SOLAR_START_V_MIN       4.5f   // Min voltage to start switching
 #define SOLAR_DARK_V            2.0f   // Bus voltage below which it's night
 #define SOLAR_HYST_V            0.5f   // Hysteresis for day/night transition
 #define MPPT_INTERVAL_MS        100
@@ -77,6 +76,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 
 // Sliding Mode Control (SMC) Tuning
 #define SMC_BASE_GAIN           2.0f
+#define SMC_MIN_GAIN            0.5f
 #define SMC_DV_THRESHOLD        0.05f  // Noise filter for dV
 #define SMC_S_HYSTERESIS        0.10f  // Error margin for sliding surface
 #define SMC_SENSED_GAIN_MULT    4.0f   // Faster tracking with INA219
@@ -99,7 +99,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define CALIB_ISC_EST           3.0f   // Panel short-circuit current heuristic
 #define CALIB_VT_EST            2.0f   // Thermal voltage scale heuristic
 #define CALIB_V_DROP_MIN        1.0f   // Min voltage drop for valid R-calc
-#define INFERENCE_MIN_DUTY      0.05f  // Min duty cycle to attempt inference
+#define INFERENCE_MIN_DUTY      0.03f  // Min duty cycle to attempt inference (approx 30/1024)
 
 // Light & Sleep Behavior
 #define PWM_LED_OFF             0
@@ -169,6 +169,8 @@ unsigned long motionStart = 0;
 unsigned long lastMppt = 0;
 unsigned long lastCalib = 0;
 unsigned long lastInaRetry = 0;
+unsigned long lastDarkTransition = 0;
+#define TRANSITION_DEBOUNCE_MS  60000UL // 1 minute stability for Day/Night
 
 // Wake Flags
 volatile bool wakePIR = false;
@@ -232,6 +234,7 @@ void setup() {
     }
 
     disableWDT();
+    lastDarkTransition = 0;
     readSensors();
 }
 
@@ -274,11 +277,23 @@ void loop() {
     // 2. Refresh Data
     readSensors();
 
-    // 3. Logic: Daytime vs Nighttime with Hysteresis
-    if (sys.isDark) {
-        if (sys.solarV > SOLAR_DARK_V + SOLAR_HYST_V) sys.isDark = false;
+    // 3. Logic: Daytime vs Nighttime with Hysteresis and Debounce
+    bool potential_dark = (sys.solarV < SOLAR_DARK_V);
+
+    // Apply Hysteresis
+    if (sys.isDark && sys.solarV > SOLAR_DARK_V + SOLAR_HYST_V) potential_dark = false;
+    else if (!sys.isDark && sys.solarV < SOLAR_DARK_V) potential_dark = true;
+    else potential_dark = sys.isDark;
+
+    if (potential_dark != sys.isDark) {
+        if (lastDarkTransition == 0) lastDarkTransition = now;
+        if (now - lastDarkTransition > TRANSITION_DEBOUNCE_MS) {
+            sys.isDark = potential_dark;
+            lastDarkTransition = 0;
+            Serial.print(F("State Change: ")); Serial.println(sys.isDark ? F("NIGHT") : F("DAY"));
+        }
     } else {
-        if (sys.solarV < SOLAR_DARK_V) sys.isDark = true;
+        lastDarkTransition = 0; // Reset timer if stable
     }
 
     // Dawn Detection (Transition from Dark to Light)
@@ -554,8 +569,10 @@ void readSensors() {
         sys.solarP_mW = sys.solarV * sys.solarI;
     } else if (duty > INFERENCE_MIN_DUTY) {
         // Inference logic (Physically derived)
-        float V_comp = sys.batV + model_V_diode * (1.0f - duty);
-        float numerator = (sys.solarV * duty) - V_comp;
+        // High-duty fallback to prevent divide-by-zero or instability
+        float d_clamped = (duty > 0.01f) ? duty : 0.01f;
+        float V_comp = sys.batV + model_V_diode * (1.0f - d_clamped);
+        float numerator = (sys.solarV * d_clamped) - V_comp;
         if (numerator < 0) numerator = 0;
 
         float inferred_Iout = numerator / model_R_conv; // Amps
@@ -647,12 +664,14 @@ void performCalibration() {
 
 void updateMPPT() {
     unsigned long now = millis();
+    float dynamic_start_v = max(SOLAR_START_V_MIN, sys.batV + 0.5f);
+
     // 1. Mode Recovery & State Synchronization (Priority 1)
     // Clear fault/low states if conditions are now good, before any early returns.
     if (sys.chargeMode == 'X' && sys.batV < config.batMaxV) {
         sys.chargeMode = current_charge_stage;
     }
-    if ((sys.chargeMode == 'N' || sys.chargeMode == 'L') && !sys.isDark && sys.solarV >= SOLAR_START_V) {
+    if ((sys.chargeMode == 'N' || sys.chargeMode == 'L') && !sys.isDark && sys.solarV >= dynamic_start_v) {
         sys.chargeMode = current_charge_stage;
     }
 
@@ -665,7 +684,7 @@ void updateMPPT() {
     }
 
     // 3. Safety & Night check
-    if (sys.solarV < SOLAR_START_V || sys.isDark) {
+    if (sys.solarV < dynamic_start_v || sys.isDark) {
         sys.mpptPWM = 0;
         if (sys.isDark) sys.chargeMode = 'N';
         else sys.chargeMode = 'L'; // Low solar
@@ -675,17 +694,24 @@ void updateMPPT() {
         return;
     }
 
-    // 4. MPPT Startup Kick: If idle but solar is present, give it a nudge
-    if (sys.mpptPWM == 0 && sys.solarV > SOLAR_START_V) {
-        sys.mpptPWM = SOLAR_KICK_PWM;
-        OCR1A = sys.mpptPWM;
-        prevSolarV = -1.0f; // Ensure trackers reset after kick
-        lastMppt = now;
-        sys.chargeMode = current_charge_stage;
-    }
-
     // 3-Stage Logic
     if (current_charge_stage == 'B') { // Bulk (MPPT)
+        // 4. MPPT Startup Kick: If idle but solar is present, jump to likely MPP range
+        if (sys.mpptPWM == 0 && sys.solarV > dynamic_start_v) {
+            // Predictive Duty: D = Vbat / Vsolar (for synchronous) or adjusted for losses
+            float predictive_duty = (sys.batV + 0.5f) / sys.solarV;
+            sys.mpptPWM = (int)(predictive_duty * 1024.0f);
+
+            // Ensure it's within a safe starting range
+            sys.mpptPWM = constrain(sys.mpptPWM, 100, 800);
+
+            OCR1A = sys.mpptPWM;
+            prevSolarV = -1.0f; // Ensure trackers reset after kick
+            lastMppt = now;
+            sys.chargeMode = current_charge_stage;
+            Serial.print(F("MPPT Kick: ")); Serial.println(sys.mpptPWM);
+        }
+
         if (sys.batV >= config.batMaxV) {
             current_charge_stage = 'A'; // To Absorption
             sys.absorptionStart = now;
@@ -764,17 +790,24 @@ void runSMCMPPT() {
         if (fabsf(dv) > SMC_DV_THRESHOLD) {
             float S = dp / dv;
 
-            // Sliding Mode Gain - Adaptive based on confidence
+            // Sliding Mode Gain - Adaptive based on confidence and Power
             float current_gain = (ina219_present) ? (SMC_BASE_GAIN * SMC_SENSED_GAIN_MULT) : SMC_BASE_GAIN;
+
+            // Adaptive scaling: reduce gain in low light (low power) to prevent oscillations
+            if (sys.solarP_mW < 5000.0f) {
+                float power_scale = mapFloat(sys.solarP_mW, 0, 5000.0f, 0.2f, 1.0f);
+                current_gain *= power_scale;
+                if (current_gain < SMC_MIN_GAIN) current_gain = SMC_MIN_GAIN;
+            }
 
             // Bias: In sensorless mode, we bias towards the right side (Higher Vsolar)
             // to avoid voltage collapse when inference error is high.
             float target_S = (ina219_present) ? 0.0f : SMC_SENSORLESS_BIAS;
 
             if (S > target_S + SMC_S_HYSTERESIS) {
-                if (sys.mpptPWM > (int)current_gain) sys.mpptPWM -= (int)current_gain;
+                if (sys.mpptPWM > 0) sys.mpptPWM -= (int)ceil(current_gain);
             } else if (S < target_S - SMC_S_HYSTERESIS) {
-                if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM += (int)current_gain;
+                if (sys.mpptPWM < MPPT_PWM_MAX_RES) sys.mpptPWM += (int)ceil(current_gain);
             }
 
             prevSolarV = sys.solarV;
@@ -897,6 +930,7 @@ void sleepSystem() {
 
     prevSolarV = -1.0f; // Force MPPT reset after sleep gap
     lastMppt = millis();
+    lastDarkTransition = 0; // Reset debounce timer
     Serial.println(F("SLEEP: Woke up"));
 }
 
