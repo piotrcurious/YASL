@@ -123,6 +123,8 @@ const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
 
 // Global State
 SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N', 0};
+float current_vcc = REF_VOLTAGE;
+unsigned long lastVccCheck = 0;
 Config config;
 float current_led_val = 0;
 bool ina219_present = false;
@@ -168,6 +170,7 @@ void configureWDT();
 void disableWDT();
 void restoreHardware();
 float getSmoothedADC(uint8_t pin);
+float readVcc();
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
 
 // --- INA219 ---
@@ -496,6 +499,14 @@ void saveConfig() {
 
 void readSensors() {
     unsigned long now = millis();
+
+    // 0. Update VCC Reference (AVR internal bandgap method)
+    // Check every 5s to save power but handle slow battery discharge
+    if (now - lastVccCheck > 5000UL || lastVccCheck == 0) {
+        current_vcc = readVcc();
+        lastVccCheck = now;
+    }
+
     // 1. Connectivity Check & Recovery (INA219)
     if (ina219_present) {
         Wire.beginTransmission(0x40);
@@ -526,11 +537,11 @@ void readSensors() {
         sys.solarV = bus + (shunt / 1000.0f);
     } else {
         float rawSolar = getSmoothedADC(PIN_SOLAR_ADC);
-        sys.solarV = rawSolar * (REF_VOLTAGE / 1023.0f) * SOLAR_DIVIDER_RATIO;
+        sys.solarV = rawSolar * (current_vcc / 1023.0f) * SOLAR_DIVIDER_RATIO;
     }
 
     float rawBat = getSmoothedADC(PIN_BAT_ADC);
-    sys.batV = rawBat * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
+    sys.batV = rawBat * (current_vcc / 1023.0f) * BAT_DIVIDER_RATIO;
 
     // 2. Current Inference (Non-linear Model)
     // Non-ideal Buck: Vbat = (Vsolar * Duty) - (Iout * R_conv) - Vdiode * (1 - Duty)
@@ -575,6 +586,25 @@ float getSmoothedADC(uint8_t pin) {
         sum += analogRead(pin);
     }
     return (float)sum / ADC_SMOOTHING_SAMPLES;
+}
+
+float readVcc() {
+#ifdef SIMULATION
+    // In mock env, channel 14 is the 1.1V bandgap
+    int result = analogRead(14);
+    return 1.1f * 1023.0f / (float)result;
+#else
+    // ATmega328P specific measurement of Vcc relative to 1.1V internal bandgap
+    ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+    delay(2); // Wait for Vref to settle
+    ADCSRA |= _BV(ADSC); // Start conversion
+    while (bit_is_set(ADCSRA, ADSC)); // Wait
+    uint8_t low  = ADCL;
+    uint8_t high = ADCH;
+    long result = (high << 8) | low;
+    // Vcc = 1.1V * 1023 / ADC
+    return 1125.3f / (float)result; // result is mV, output is V
+#endif
 }
 
 void performCalibration() {

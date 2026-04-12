@@ -1,25 +1,8 @@
 
 #include "Arduino.h"
-#include "avr/interrupt.h"
-
-void checkAndInitiateSleep();
-void processCommand(const char* line);
-void validateConfig();
-void loadConfig();
-void saveConfig();
-void readSensors();
-float getSmoothedADC(uint8_t pin);
-float readVcc();
-void performCalibration();
-void updateMPPT();
-void runSMCMPPT();
-void updateLight();
-void sleepSystem();
-void configureWDT();
-void disableWDT();
-void restoreHardware();
-float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
-
+#include "EEPROM.h"
+#include "Wire.h"
+#include "Adafruit_INA219.h"
 
 // Content of .ino file
 
@@ -1012,41 +995,55 @@ float mapFloat(float x, float in_min, float in_max, float out_min, float out_max
 }
 
 
-
 int main() {
-    sim.ina219_ok = false; // Force sensorless mode
-    sim.R_conv_base = 0.2f;
-    sim.tempC = 25.0f;
-    sim.batteryV = 3.5f;
-    sim.solarOCV = 18.0f;
-
+    sim.ina219_ok = false; // Test sensorless as it's harder in low light
     setup();
 
-    std::cout << "\n[SCENARIO] Sensorless MPPT start" << std::endl;
-    for(int i = 0; i < 50; ++i) {
-        loop();
-        update_sim();
+    // Stabilize to Daylight
+    sim.solarOCV = 18.0;
+    Serial.println("[STABILIZING TO DAYLIGHT]");
+    // Debounce is 60s, so we need > 600 loops of 100ms.
+    // Main loop has a 50ms delay + whatever update_sim does.
+    // Actually, loop() in .ino has a 50ms delay. update_sim advances 100ms.
+    // So each loop iteration is effectively 150ms of sim time?
+    // No, delay(50) advances current_time_ms by 50. update_sim advances by 100.
+    // So each iteration is 150ms. 60s / 0.15s = 400 iterations.
+    for(int i=0; i<500; i++) { update_sim(); loop(); }
+    Serial.print("Initial Dark State: "); Serial.println(sys.isDark);
+    Serial.print("Initial Mode: "); Serial.println(sys.chargeMode);
+
+    // Low light sweep
+    Serial.println("[START LOW LIGHT SWEEP]");
+    for (float ocv = 3.0; ocv <= 6.0; ocv += 0.5) {
+        sim.solarOCV = ocv;
+        // Run several loops to allow MPPT to track
+        for(int i=0; i<200; i++) {
+            update_sim();
+            loop();
+        }
+        Serial.print("OCV: "); Serial.print(ocv);
+        Serial.print(" Mode: "); Serial.print(sys.chargeMode);
+        Serial.print(" SolarV: "); Serial.print(sys.solarV);
+        Serial.print(" SolarP: "); Serial.print(sys.solarP_mW);
+        Serial.print(" Duty: "); Serial.println(sys.mpptPWM);
     }
 
-    std::cout << "\n[SCENARIO] Thermal Drift (Heating up to 75C)" << std::endl;
-    sim.tempC = 75.0f;
-    for(int i = 0; i < 100; ++i) {
-        loop();
+    // Dusk transition with debounce check
+    Serial.println("[START DUSK TRANSITION]");
+    sim.solarOCV = 1.0;
+    // OCV 1.0 is below SOLAR_DARK_V (2.0). Debounce should trigger after 60s.
+    // 60s / 0.15s = 400 iterations.
+    for(int i=0; i<600; i++) {
         update_sim();
-    }
-
-    std::cout << "\n[SCENARIO] Triggering Calibration" << std::endl;
-    Serial.sim_input("k\n");
-    for(int i = 0; i < 20; ++i) {
         loop();
-        update_sim();
+        if (i % 100 == 0) {
+            Serial.print("T+"); Serial.print(i*0.15);
+            Serial.print("s Mode: "); Serial.print(sys.chargeMode);
+            Serial.print(" isDark: "); Serial.println(sys.isDark);
+        }
+        if (sys.isDark && i > 400) break; // Optimization
     }
-
-    std::cout << "\n[SCENARIO] Re-evaluating MPPT performance" << std::endl;
-    for(int i = 0; i < 50; ++i) {
-        loop();
-        update_sim();
-    }
+    Serial.print("Final isDark: "); Serial.println(sys.isDark);
 
     return 0;
 }

@@ -284,6 +284,7 @@ struct SimSensors {
     float batteryV;
     float batteryCapAH;
     float systemCurrentMA;
+    float vcc;         // Supply voltage (Influences ADC ref)
     double harvestedMAH;
     double consumedMAH;
     float tempC;      // Simulation Temperature
