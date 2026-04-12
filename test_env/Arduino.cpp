@@ -1,7 +1,14 @@
 #include <cstdlib>
+#include <iostream>
+#include <cmath>
 
 #include "Arduino.h"
 #include "avr/interrupt.h"
+
+#define DEFAULT 1
+#define INTERNAL 2
+#define EXTERNAL 3
+
 #include "EEPROM.h"
 
 int TCCR2A = 0;
@@ -38,6 +45,7 @@ void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024]
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
 SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.2f, false, true };
+uint8_t current_adc_ref = DEFAULT;
 
 unsigned long current_time_ms = 0;
 
@@ -119,6 +127,10 @@ void delay(unsigned long ms) {
     current_time_ms += ms;
 }
 
+void analogReference(uint8_t mode) {
+    current_adc_ref = mode;
+}
+
 void pinMode(int pin, int mode) {}
 void digitalWrite(int pin, int val) {}
 
@@ -129,15 +141,20 @@ int digitalRead(int pin) {
 
 int analogRead(int pin) {
     float noise = ((float)rand() / (float)RAND_MAX - 0.5f) * 0.05f; // +/- 25mV noise
-    if (pin == A1) { // Battery divider ratio was 3.0. Vpin = Vbat / 3.0
-        float v_pin = (sim.batteryV + noise) / 3.0f;
-        return (int)(v_pin * 1023.0f / sim.vcc);
+    float ref = (current_adc_ref == INTERNAL) ? 1.1f : sim.vcc;
+
+    if (pin == A1) {
+        float ratio = (current_adc_ref == INTERNAL) ? 5.54f : 3.0f;
+        float v_pin = (sim.batteryV + noise) / ratio;
+        return (int)(v_pin * 1023.0f / ref);
     }
-    if (pin == A0) { // Solar divider ratio was 4.0
-        float v_pin = (sim.solarBusV + noise) / 4.0f;
-        return (int)(v_pin * 1023.0f / sim.vcc);
+    if (pin == A0) {
+        float ratio = (current_adc_ref == INTERNAL) ? 31.3f : 4.0f;
+        float v_pin = (sim.solarBusV + noise) / ratio;
+        return (int)(v_pin * 1023.0f / ref);
     }
     if (pin == 14) { // Mocking 1.1V Bandgap measurement (channel 0x0E = 14)
+        // This is only valid in DEFAULT ref mode (measuring bandgap against Vcc)
         // Formula: ADC = 1.1 * 1023 / Vcc
         return (int)(1.1f * 1023.0f / sim.vcc);
     }
@@ -175,3 +192,9 @@ long map(long x, long in_min, long in_max, long out_min, long out_max) {
   if (in_max == in_min) return out_min;
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
+
+void MockWire::beginTransmission(uint8_t addr) {}
+int MockWire::endTransmission() {
+    return sim.ina219_ok ? 0 : 4; // 4 = other error
+}
+void MockWire::write(uint8_t val) {}

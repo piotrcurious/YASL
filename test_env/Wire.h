@@ -4,9 +4,9 @@
 class MockWire {
 public:
     void begin() {}
-    void beginTransmission(uint8_t addr) {}
-    int endTransmission() { return 0; }
-    void write(uint8_t val) {}
+    void beginTransmission(uint8_t addr);
+    int endTransmission();
+    void write(uint8_t val);
     uint8_t requestFrom(uint8_t addr, uint8_t len) { return 0; }
     int available() { return 0; }
     int read() { return 0; }
