@@ -83,26 +83,21 @@ void loop() {
   battery_soc = (battery_voltage - V_MIN) / (V_MAX - V_MIN) * 100;
 
   // Implement the MPPT algorithm
-  void mppt();
   mppt();
 
   // Implement the battery protection algorithm
-  void battery_protection();
   battery_protection();
 
   // Read the motion sensor state
   motion_state = digitalRead(MOTION_PIN);
 
   // Implement the motion detection algorithm
-  void motion_detection();
   motion_detection();
 
   // Implement the USB port control algorithm
-  void usb_control();
   usb_control();
 
   // Send data in JSON format to Wi-Fi module
-  void send_data();
   send_data();
 
 }

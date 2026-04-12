@@ -37,7 +37,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 0.0, 0.0, 25.0f, 0.2f, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.2f, false, true };
 
 unsigned long current_time_ms = 0;
 
@@ -131,11 +131,15 @@ int analogRead(int pin) {
     float noise = ((float)rand() / (float)RAND_MAX - 0.5f) * 0.05f; // +/- 25mV noise
     if (pin == A1) { // Battery divider ratio was 3.0. Vpin = Vbat / 3.0
         float v_pin = (sim.batteryV + noise) / 3.0f;
-        return (int)(v_pin * 1023.0f / 5.0f);
+        return (int)(v_pin * 1023.0f / sim.vcc);
     }
     if (pin == A0) { // Solar divider ratio was 4.0
         float v_pin = (sim.solarBusV + noise) / 4.0f;
-        return (int)(v_pin * 1023.0f / 5.0f);
+        return (int)(v_pin * 1023.0f / sim.vcc);
+    }
+    if (pin == 14) { // Mocking 1.1V Bandgap measurement (channel 0x0E = 14)
+        // Formula: ADC = 1.1 * 1023 / Vcc
+        return (int)(1.1f * 1023.0f / sim.vcc);
     }
     return 0;
 }
