@@ -26,10 +26,10 @@
 <line x1="60" y1="440" x2="740" y2="440" stroke="#333" stroke-width="2"/>
 <line x1="60" y1="60" x2="60" y2="440" stroke="#333" stroke-width="2"/>
 <text x="400" y="490" text-anchor="middle" font-family="Arial" font-size="14">Input Power (W)</text>
-<polyline points="60.3061984011091,73.84941075530878 387.7390239606356,83.31355974591105 739.9758518611113,92.78948509955319" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="60.01225248008216,91.96915002153202 196.00262693172962,101.92414048485841 332.0747499304852,88.14948753885994 467.6214865833181,99.55723513173058 603.3211341875761,89.95159458783223 739.9901980159342,90.84871951491249" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
 <line x1="600" y1="80" x2="630" y2="80" stroke="red" stroke-width="3"/>
 <text x="640" y="85" font-family="Arial" font-size="12">Diode Rectification</text>
-<polyline points="60.0,72.68663038975353 387.7390239606356,83.31355974591105 739.9758518611113,92.78948509955319" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="60.0,71.4334650056586 195.75463673486686,81.2977407985208 331.7042349328009,87.00744846700155 467.6538331307349,101.26623456942826 603.5554016067471,93.29888428036162 738.8884550069472,95.22353929560637" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
 <line x1="600" y1="110" x2="630" y2="110" stroke="blue" stroke-width="3"/>
 <text x="640" y="115" font-family="Arial" font-size="12">Synchronous Rectification</text>
 </svg>

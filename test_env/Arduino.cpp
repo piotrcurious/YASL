@@ -48,7 +48,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 0.0f, 3.5f, 1.0f, 10.0f, 3.5f, 0.0, 0.0, 25.0f, 0.2f, true, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 0.0f, 3.6f, 1.0f, 10.0f, 3.6f, 0.0, 0.0, 25.0f, 0.2f, true, false, true };
 uint8_t current_adc_ref = DEFAULT;
 
 unsigned long current_time_ms = 0;
@@ -61,39 +61,75 @@ void update_sim() {
     float duty = (float)OCR1A / 1023.0f;
     float current_Voc = sim.solarOCV;
 
-    // Non-ideal model for a small PV buck converter
-    float R_ds_on = 0.05f;
-    float R_inductor = 0.50f;   // Realistic DCR for a small power inductor
-    float R_sync = 0.05f;
-    float V_diode = 0.70f;      // Vf for a common diode
+    // --- Advanced Hardware Parameters (Ref: Bourns SRP1265C Series) ---
     float f_sw = 15600.0f;
-    float t_tr_tf = 400e-9f;
+
+    // Inductor Model (SRP1265C-220M)
+    float L0 = 22.0e-6f;        // Nominal Inductance 22uH
+    float R_dcr = 0.046f;       // DCR 46 mOhm
+    float I_sat = 5.3f;         // Saturation Current 5.3A
+    float C_pw = 15.0e-12f;     // Inter-winding capacitance approx 15pF
+
+    // MOSFETs
+    float R_ds_on = 0.040f;
+    float R_sync = 0.040f;
+    float V_diode = 0.55f;      // High-quality Schottky
+    float t_tr_tf = 300e-9f;
+
+    // Input Capacitor
+    float C_in_esr = 0.050f;    // 50 mOhm ESR for input filter
+
+    // Battery Model (30% SOC)
+    float V_bat_ocv = 3.60f;
+    float R_bat_int = 0.60f;    // Internal Resistance 0.6 Ohm
+
     float I_q = 0.025f;
-    float P_gate = 0.050f;
+    float P_gate = 0.080f;
 
-    float Vbat = sim.batteryV;
     float Isc = sim.solarCurrentMA;
+    bool active_sync = sim.sync_mode && (OCR1B > OCR1A) && (OCR1B < 1023);
 
-    // In Synchronous mode, low-side FET is complementary to high-side.
-    bool active_sync = sim.sync_mode;
-
-    if (duty < 0.01f) {
+    if (duty < 0.015f) {
         sim.solarBusV = current_Voc;
         sim.solarCurrentMA_actual = 0;
+        sim.batteryV = V_bat_ocv;
     } else {
         float Iout_est = 100.0f;
-        for(int i=0; i<60; i++) {
+        for(int i=0; i<80; i++) {
             float Iout_A = Iout_est / 1000.0f;
             if (Iout_A < 0.001f) Iout_A = 0.001f;
 
-            float P_cond_hs = (Iout_A * Iout_A) * (R_ds_on + R_inductor) * duty;
-            float P_cond_ls = active_sync ? ((Iout_A * Iout_A) * R_sync * (1.0f - duty)) : (Iout_A * V_diode * (1.0f - duty));
-            float P_sw = 0.5f * sim.solarBusV * Iout_A * f_sw * t_tr_tf;
-            float total_loss_W = P_cond_hs + P_cond_ls + P_sw + P_gate;
+            // 1. Frequency-dependent Inductor AC Resistance (Skin Effect)
+            // Rac = Rdc * (1 + 0.1 * sqrt(f_kHz)) heuristic for small power inductors
+            float R_ac_mult = 1.0f + 0.1f * sqrt(f_sw / 1000.0f);
+            float R_ind_effective = R_dcr * R_ac_mult;
 
-            float target_Vsolar = (Vbat * Iout_A + total_loss_W) / (Iout_A * duty);
+            // 2. Inductor Saturation
+            // L(I) = L0 / (1 + (I/Isat)^2)
+            float L_actual = L0 / (1.0f + pow(Iout_A / I_sat, 2));
+
+            // 3. Conduction Losses
+            float P_cond_hs = (Iout_A * Iout_A) * (R_ds_on + R_ind_effective) * duty;
+            float P_cond_ls = active_sync ? ((Iout_A * Iout_A) * (R_sync + R_ind_effective) * (1.0f - duty)) : (Iout_A * V_diode * (1.0f - duty));
+
+            // 4. Switching and Capacitance Losses
+            float P_sw = 0.5f * sim.solarBusV * Iout_A * f_sw * t_tr_tf;
+            float P_cpw = C_pw * pow(sim.solarBusV, 2) * f_sw; // Inter-winding cap loss
+
+            // 5. Input Capacitor Ripple Loss
+            // I_ripple_rms = Iout * sqrt(D * (1-D))
+            float I_rip_rms = Iout_A * sqrt(duty * (1.0f - duty));
+            float P_cap_esr = (I_rip_rms * I_rip_rms) * C_in_esr;
+
+            float total_loss_W = P_cond_hs + P_cond_ls + P_sw + P_gate + P_cpw + P_cap_esr;
+
+            // Dynamic Battery Voltage under load
+            sim.batteryV = V_bat_ocv + Iout_A * R_bat_int;
+
+            // Power balance: Vsolar * Ipanel = Vbat * Iout + Ploss
+            float target_Vsolar = (sim.batteryV * Iout_A + total_loss_W) / (Iout_A * duty);
             if (target_Vsolar > current_Voc) target_Vsolar = current_Voc;
-            if (target_Vsolar < Vbat + 0.1f) target_Vsolar = Vbat + 0.1f;
+            if (target_Vsolar < sim.batteryV + 0.2f) target_Vsolar = sim.batteryV + 0.2f;
 
             float Vt = 2.0f;
             sim.solarCurrentMA_actual = Isc * (1.0f - exp((target_Vsolar - current_Voc) / Vt));
@@ -104,14 +140,16 @@ void update_sim() {
         }
     }
 
-    float solarOutMA = (duty > 0.01f) ? (sim.solarCurrentMA_actual / duty) : 0;
+    float solarOutMA = (duty > 0.02f) ? (sim.solarCurrentMA_actual / duty) : 0;
     float netMA = solarOutMA - (I_q * 1000.0f);
 
     double step_hours = 0.1 / 3600.0;
     sim.harvestedMAH += (double)solarOutMA * step_hours;
     sim.consumedMAH += (double)sim.systemCurrentMA * step_hours;
 
-    sim.batteryV += (float)(netMA / 1000.0f * (1.0f / sim.batteryCapAH) * step_hours * 100.0f);
+    // Battery SOC dynamics (simplified)
+    // Note: batteryV is now a function of Iout and Rint, so we don't integrate it directly here
+    // as it represents the terminal voltage.
     sim.vcc = std::min(5.0f, sim.batteryV);
 
     sim.solarShuntV = sim.solarCurrentMA_actual * 0.01f;

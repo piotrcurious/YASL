@@ -12,5 +12,5 @@ Comparing Diode Rectification (v2.3.1) vs Synchronous Rectification (v2.4.0).
 
 | Configuration | Peak Efficiency | Startup OCV | 5W Efficiency | 20W Efficiency |
 | :--- | :---: | :---: | :---: | :---: |
-| Diode | 96.4% | 14.0V | 96.4% | 91.4% |
-| Sync | 96.7% | 14.0V | 96.7% | 91.4% |
+| Diode | 92.6% | 13.0V | 91.6% | 89.0% |
+| Sync | 97.0% | 13.0V | 97.0% | 94.4% |
