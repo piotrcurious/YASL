@@ -291,6 +291,7 @@ struct SimSensors {
     float solarOCV; // Open Circuit Voltage
     float solarShuntV;
     float solarCurrentMA;
+    float solarCurrentMA_actual;
     float batteryV;
     float batteryCapAH;
     float systemCurrentMA;

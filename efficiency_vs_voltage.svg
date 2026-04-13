@@ -1,0 +1,35 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+<rect width="100%" height="100%" fill="#fff"/>
+<text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">Efficiency vs Solar Voltage</text>
+<line x1="60" y1="440.0" x2="740" y2="440.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="445.0" text-anchor="end" font-family="Arial" font-size="12">0%</text>
+<line x1="60" y1="402.0" x2="740" y2="402.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="407.0" text-anchor="end" font-family="Arial" font-size="12">10%</text>
+<line x1="60" y1="364.0" x2="740" y2="364.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="369.0" text-anchor="end" font-family="Arial" font-size="12">20%</text>
+<line x1="60" y1="326.0" x2="740" y2="326.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="331.0" text-anchor="end" font-family="Arial" font-size="12">30%</text>
+<line x1="60" y1="288.0" x2="740" y2="288.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="293.0" text-anchor="end" font-family="Arial" font-size="12">40%</text>
+<line x1="60" y1="250.0" x2="740" y2="250.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="255.0" text-anchor="end" font-family="Arial" font-size="12">50%</text>
+<line x1="60" y1="212.0" x2="740" y2="212.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="217.0" text-anchor="end" font-family="Arial" font-size="12">60%</text>
+<line x1="60" y1="174.0" x2="740" y2="174.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="179.0" text-anchor="end" font-family="Arial" font-size="12">70%</text>
+<line x1="60" y1="136.0" x2="740" y2="136.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="141.0" text-anchor="end" font-family="Arial" font-size="12">80%</text>
+<line x1="60" y1="98.0" x2="740" y2="98.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="103.0" text-anchor="end" font-family="Arial" font-size="12">90%</text>
+<line x1="60" y1="60.0" x2="740" y2="60.0" stroke="#eee" stroke-width="1"/>
+<text x="50" y="65.0" text-anchor="end" font-family="Arial" font-size="12">100%</text>
+<line x1="60" y1="440" x2="740" y2="440" stroke="#333" stroke-width="2"/>
+<line x1="60" y1="60" x2="60" y2="440" stroke="#333" stroke-width="2"/>
+<text x="400" y="490" text-anchor="middle" font-family="Arial" font-size="14">Solar OCV (V)</text>
+<polyline points="60.0,64.0353813950432 157.12898157406084,66.10970754087754 254.25796314812166,67.01584712594405 448.5159262962433,67.50902620511164 739.9028710184259,65.44155720787239" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<line x1="600" y1="80" x2="630" y2="80" stroke="red" stroke-width="3"/>
+<text x="640" y="85" font-family="Arial" font-size="12">Diode Rectification</text>
+<polyline points="254.25796314812166,67.55558396000652 448.5159262962433,68.36226077882202 739.9028710184259,69.09231190875448" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
+<line x1="600" y1="110" x2="630" y2="110" stroke="blue" stroke-width="3"/>
+<text x="640" y="115" font-family="Arial" font-size="12">Synchronous Rectification</text>
+</svg>

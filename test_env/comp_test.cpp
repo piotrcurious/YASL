@@ -1,9 +1,14 @@
 
+#include <iostream>
+#include "Arduino.h"
+#include "EEPROM.h"
+#include "Wire.h"
+
 /*
  * YASL (Yet Another Solar Lamp) - Consolidated Version
  *
  * This version combines features from all project iterations:
- * - Advanced Sliding Mode Control (SMC) MPPT with CC/CV safety.
+ * - Simple P&O MPPT with CC/CV (Constant Current/Constant Voltage) safety.
  * - Robust ADC sensor reading with averaging.
  * - PIR motion detection with smooth dimming.
  * - Advanced Sleep Management (WDT for timed wake + INT0 for motion wake).
@@ -27,14 +32,27 @@ const uint8_t PIN_SOLAR_ADC = A0;   // Raw solar ADC (backup/redundant)
 const uint8_t PIN_BAT_ADC   = A1;   // Main Battery Voltage Divider
 const uint8_t PIN_LED_PWM   = 3;    // LED Mosfet (Timer2)
 const uint8_t PIN_PIR       = 2;    // Motion Sensor (D2 is INT0)
-const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
+const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT (Main FET, Timer1 OC1A)
+const uint8_t PIN_MPPT_SYNC = 10;   // Solar MPPT (Sync FET, Timer1 OC1B)
 
 // --- Tuning & Defaults ---
 
-// System Reference
+// System Reference & Precision Mode
+// Set to true if you have adjusted your voltage dividers for the 1.1V internal reference.
+// INTERNAL mode provides higher precision and Vcc independence.
+// Divider Ratios for 1.1V Internal Ref (Recommended):
+// Bat (4.2V max): 100k / 22k -> Ratio = 5.54 (Vpin = 0.75V)
+// Solar (24V max): 100k / 3.3k -> Ratio = 31.3 (Vpin = 0.76V)
+#define USE_INTERNAL_1V1_REF    false
+
+#define BAT_DIVIDER_RATIO_DEF   3.0f
+#define SOLAR_DIVIDER_RATIO_DEF 4.0f
+#define BAT_DIVIDER_RATIO_INT   5.54f
+#define SOLAR_DIVIDER_RATIO_INT 31.3f
+
 #define REF_VOLTAGE             5.0f
-#define BAT_DIVIDER_RATIO       3.0f
-#define SOLAR_DIVIDER_RATIO     4.0f
+#define BAT_DIVIDER_RATIO       (USE_INTERNAL_1V1_REF ? BAT_DIVIDER_RATIO_INT : BAT_DIVIDER_RATIO_DEF)
+#define SOLAR_DIVIDER_RATIO     (USE_INTERNAL_1V1_REF ? SOLAR_DIVIDER_RATIO_INT : SOLAR_DIVIDER_RATIO_DEF)
 #define ADC_SMOOTHING_SAMPLES   8
 
 // Battery Defaults (Li-Ion/Li-Po typical)
@@ -50,6 +68,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define MPPT_INTERVAL_MS        100
 #define MPPT_PWM_MAX_RES        1023   // 10-bit range (Full ICR1)
 #define MPPT_PWM_MIN_RES        0
+#define SYNC_FET_DEADTIME       12     // Deadtime in ticks (~0.75us)
 
 // Sliding Mode Control (SMC) Tuning
 #define SMC_BASE_GAIN           2.0f
@@ -123,6 +142,7 @@ const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
 
 // Global State
 SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N', 0};
+float current_adc_scale = REF_VOLTAGE;
 Config config;
 float current_led_val = 0;
 bool ina219_present = false;
@@ -138,7 +158,7 @@ char current_charge_stage = 'B';
 
 // Non-linear Inference Parameters
 float model_R_conv = DEF_MODEL_R_CONV;
-float model_V_diode = DEF_MODEL_V_DIODE;
+float model_V_diode = DEF_MODEL_V_DIODE; // Set to ~0.01 in sync mode
 
 // Timers
 unsigned long lastLog = 0;
@@ -168,6 +188,7 @@ void configureWDT();
 void disableWDT();
 void restoreHardware();
 float getSmoothedADC(uint8_t pin);
+float readVcc();
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
 
 // --- INA219 ---
@@ -194,19 +215,23 @@ void setup() {
     // Immediate hardware config
     restoreHardware();
 
+#if USE_INTERNAL_1V1_REF
+    analogReference(INTERNAL);
+#endif
+
     Wire.begin();
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v2.3.1 INIT"));
+    //Serial.println(F("YASL CONSOLIDATED v2.4 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
 
     if (!ina219.begin()) {
-        Serial.println(F("ERR: INA219 FAILED - Using fallback ADC"));
+        //Serial.println(F("ERR: INA219 FAILED - Using fallback ADC"));
         ina219_present = false;
     } else {
-        Serial.println(F("INA219 OK"));
+        //Serial.println(F("INA219 OK"));
         ina219_present = true;
     }
 
@@ -223,11 +248,11 @@ void checkAndInitiateSleep() {
 
     if (sys.batPcnt < BAT_LOW_SLEEP_PCNT && sys.isDark) {
         shouldSleep = true;
-        Serial.println(F("Low battery, initiating timed sleep."));
+        //Serial.println(F("Low battery, initiating timed sleep."));
     } else if (sys.isDark && sys.ledPWM <= config.ledDimPWM &&
                (millis() - motionStart > SLEEP_IDLE_TIMEOUT_MS)) {
         shouldSleep = true;
-        Serial.println(F("Dark and idle, initiating timed sleep."));
+        //Serial.println(F("Dark and idle, initiating timed sleep."));
     }
 
     if (shouldSleep) {
@@ -244,11 +269,11 @@ void loop() {
         sys.isMotion = true;
         motionStart = now;
         motion_intensity++; // Increment on each trigger
-        Serial.println(F("WAKE: PIR"));
+        //Serial.println(F("WAKE: PIR"));
     }
     if (wakeWDT) {
         wakeWDT = false;
-        Serial.println(F("WAKE: WDT"));
+        //Serial.println(F("WAKE: WDT"));
     }
 
     // 2. Refresh Data
@@ -267,7 +292,7 @@ void loop() {
         if (now - lastDarkTransition > TRANSITION_DEBOUNCE_MS) {
             sys.isDark = potential_dark;
             lastDarkTransition = 0;
-            Serial.print(F("State Change: ")); Serial.println(sys.isDark ? F("NIGHT") : F("DAY"));
+            //Serial.print(F("State Change: ")); //Serial.println(sys.isDark ? F("NIGHT") : F("DAY"));
         }
     } else {
         lastDarkTransition = 0; // Reset timer if stable
@@ -275,7 +300,7 @@ void loop() {
 
     // Dawn Detection (Transition from Dark to Light)
     if (last_dark_state && !sys.isDark) {
-        Serial.println(F("DAWN: Resetting Stats"));
+        //Serial.println(F("DAWN: Resetting Stats"));
         sys.batMaxToday = sys.batV;
         sys.batMinToday = sys.batV;
     }
@@ -291,7 +316,7 @@ void loop() {
         if (manual_override && (now - manual_override_start > OVERRIDE_TIMEOUT_MS)) {
             manual_override = false;
             sys.isMotion = false;
-            Serial.println(F("Override: Timeout"));
+            //Serial.println(F("Override: Timeout"));
         }
 
         updateLight();
@@ -324,19 +349,19 @@ void loop() {
 
     // 4. Logging
     if (now - lastLog > JSON_INTERVAL_MS) {
-        Serial.print(F("{\"sV\":")); Serial.print(sys.solarV, 2);
-        Serial.print(F(",\"sI_mA\":")); Serial.print(sys.solarI, 1);
-        Serial.print(F(",\"sP_mW\":")); Serial.print(sys.solarP_mW, 0);
-        Serial.print(F(",\"bV\":")); Serial.print(sys.batV, 2);
-        Serial.print(F(",\"bP\":")); Serial.print(sys.batPcnt, 0);
-        Serial.print(F(",\"bMax\":")); Serial.print(sys.batMaxToday, 2);
-        Serial.print(F(",\"bMin\":")); Serial.print(sys.batMinToday, 2);
-        Serial.print(F(",\"dk\":")); Serial.print(sys.isDark ? "true" : "false");
-        Serial.print(F(",\"mot\":")); Serial.print(sys.isMotion ? "true" : "false");
-        Serial.print(F(",\"mP\":")); Serial.print(sys.mpptPWM);
-        Serial.print(F(",\"lP\":")); Serial.print(sys.ledPWM);
-        Serial.print(F(",\"ch\":")); Serial.print("\""); Serial.print(sys.chargeMode); Serial.print("\"");
-        Serial.println(F("}"));
+        //Serial.print(F("{\"sV\":")); //Serial.print(sys.solarV, 2);
+        //Serial.print(F(",\"sI_mA\":")); //Serial.print(sys.solarI, 1);
+        //Serial.print(F(",\"sP_mW\":")); //Serial.print(sys.solarP_mW, 0);
+        //Serial.print(F(",\"bV\":")); //Serial.print(sys.batV, 2);
+        //Serial.print(F(",\"bP\":")); //Serial.print(sys.batPcnt, 0);
+        //Serial.print(F(",\"bMax\":")); //Serial.print(sys.batMaxToday, 2);
+        //Serial.print(F(",\"bMin\":")); //Serial.print(sys.batMinToday, 2);
+        //Serial.print(F(",\"dk\":")); //Serial.print(sys.isDark ? "true" : "false");
+        //Serial.print(F(",\"mot\":")); //Serial.print(sys.isMotion ? "true" : "false");
+        //Serial.print(F(",\"mP\":")); //Serial.print(sys.mpptPWM);
+        //Serial.print(F(",\"lP\":")); //Serial.print(sys.ledPWM);
+        //Serial.print(F(",\"ch\":")); //Serial.print("\""); //Serial.print(sys.chargeMode); //Serial.print("\"");
+        //Serial.println(F("}"));
         lastLog = now;
     }
 
@@ -364,29 +389,29 @@ void processCommand(const char* line) {
     char cmd = line[0];
 
     if (cmd == 'd') { // Diagnostics
-        Serial.println(F("--- DIAGNOSTICS ---"));
-        Serial.print(F("INA219: ")); Serial.println(ina219_present ? "OK" : "MISSING");
-        Serial.print(F("Uptime: ")); Serial.print(now / 1000); Serial.println(F("s"));
-        Serial.print(F("Mode: ")); Serial.println(sys.chargeMode);
-        Serial.print(F("Intensity: ")); Serial.println(motion_intensity);
+        //Serial.println(F("--- DIAGNOSTICS ---"));
+        //Serial.print(F("INA219: ")); //Serial.println(ina219_present ? "OK" : "MISSING");
+        //Serial.print(F("Uptime: ")); //Serial.print(now / 1000); //Serial.println(F("s"));
+        //Serial.print(F("Mode: ")); //Serial.println(sys.chargeMode);
+        //Serial.print(F("Intensity: ")); //Serial.println(motion_intensity);
 #ifdef SIMULATION
-        Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
-        Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
+        //Serial.print(F("Harvested: ")); //Serial.print(sim.harvestedMAH); //Serial.println(F("mAh"));
+        //Serial.print(F("Consumed: ")); //Serial.print(sim.consumedMAH); //Serial.println(F("mAh"));
 #endif
     }
     else if (cmd == 'c') { // View Config
-        Serial.println(F("--- CONFIG ---"));
-        Serial.print(F("BatMax: ")); Serial.println(config.batMaxV);
-        Serial.print(F("BatMin: ")); Serial.println(config.batMinV);
-        Serial.print(F("LEDMax: ")); Serial.println(config.ledMaxPWM);
-        Serial.print(F("Timeout: ")); Serial.println(config.motionTimeout);
+        //Serial.println(F("--- CONFIG ---"));
+        //Serial.print(F("BatMax: ")); //Serial.println(config.batMaxV);
+        //Serial.print(F("BatMin: ")); //Serial.println(config.batMinV);
+        //Serial.print(F("LEDMax: ")); //Serial.println(config.ledMaxPWM);
+        //Serial.print(F("Timeout: ")); //Serial.println(config.motionTimeout);
     }
     else if (cmd == 'm') { // Manual Light Toggle
         manual_override = !manual_override;
         sys.isMotion = manual_override;
         motionStart = now;
         manual_override_start = now;
-        Serial.print(F("Manual Override: ")); Serial.println(manual_override);
+        //Serial.print(F("Manual Override: ")); //Serial.println(manual_override);
     }
     else if (cmd == 's' && strlen(line) > 2) { // Set Param (e.g. sM 4.2)
         char param = line[1];
@@ -402,34 +427,34 @@ void processCommand(const char* line) {
         if (changed) {
             validateConfig();
             saveConfig();
-            Serial.print(F("Param ")); Serial.print(param); Serial.println(F(" Saved"));
+            //Serial.print(F("Param ")); //Serial.print(param); //Serial.println(F(" Saved"));
         }
     }
     else if (cmd == 'v') { // View Stats (Sim only)
 #ifdef SIMULATION
-        Serial.print(F("Harvested: ")); Serial.print(sim.harvestedMAH); Serial.println(F("mAh"));
-        Serial.print(F("Consumed: ")); Serial.print(sim.consumedMAH); Serial.println(F("mAh"));
+        //Serial.print(F("Harvested: ")); //Serial.print(sim.harvestedMAH); //Serial.println(F("mAh"));
+        //Serial.print(F("Consumed: ")); //Serial.print(sim.consumedMAH); //Serial.println(F("mAh"));
 #endif
     }
     else if (cmd == 'r') { // Reset Defaults
         config.magic = 0;
         saveConfig();
         loadConfig();
-        Serial.println(F("Config Reset"));
+        //Serial.println(F("Config Reset"));
     }
     else if (cmd == 'h' || cmd == '?') {
-        Serial.println(F("--- HELP ---"));
-        Serial.println(F("d: Diag, c: Config, m: Toggle Override, v: Stats"));
-        Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
-        Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
+        //Serial.println(F("--- HELP ---"));
+        //Serial.println(F("d: Diag, c: Config, m: Toggle Override, v: Stats"));
+        //Serial.println(F("sM: BatMax, sm: BatMin, sF: Float, sT: Timeout"));
+        //Serial.println(F("sX: LEDMax, sD: LEDDim, r: Reset"));
     }
     else if (cmd == 'S' && strlen(line) > 1) { // Manual Stage Force (for testing)
         char stage = line[1];
         if (stage == 'B' || stage == 'A' || stage == 'F') {
             current_charge_stage = stage;
-            Serial.print(F("Stage forced to: ")); Serial.println(stage);
+            //Serial.print(F("Stage forced to: ")); //Serial.println(stage);
         } else {
-            Serial.println(F("Invalid stage. Use B, A, or F."));
+            //Serial.println(F("Invalid stage. Use B, A, or F."));
         }
     }
     else if (cmd == 'k') { // Force Calibration
@@ -481,10 +506,10 @@ void loadConfig() {
         config.motionTimeout = DEF_MOTION_TIMEOUT_MS;
         validateConfig();
         saveConfig();
-        Serial.println(F("EEPROM: Initialized Defaults"));
+        //Serial.println(F("EEPROM: Initialized Defaults"));
     } else {
         validateConfig(); // Ensure persistent values are still sane
-        Serial.println(F("EEPROM: Loaded Config"));
+        //Serial.println(F("EEPROM: Loaded Config"));
     }
 }
 
@@ -496,16 +521,26 @@ void saveConfig() {
 
 void readSensors() {
     unsigned long now = millis();
+    // 0. Update ADC Scale
+#if USE_INTERNAL_1V1_REF
+    current_adc_scale = 1.1f;
+#else
+    // Measure Vcc relative to 1.1V bandgap every cycle to ensure precision
+    // if powered directly from battery.
+    current_adc_scale = readVcc();
+#endif
+
     // 1. Connectivity Check & Recovery (INA219)
     if (ina219_present) {
         Wire.beginTransmission(0x40);
+        delay(1);
         byte error = Wire.endTransmission();
         if (error != 0) {
             ina219_present = false;
             lastInaRetry = now;
-            Serial.print(F("INA219: Lost connection (error "));
-            Serial.print(error);
-            Serial.println(F(")"));
+            //Serial.print(F("INA219: Lost connection (error "));
+            //Serial.print(error);
+            //Serial.println(F(")"));
         }
     } else if (now - lastInaRetry > 30000UL) {
         // Periodic retry every 30s
@@ -513,7 +548,7 @@ void readSensors() {
             ina219_present = true;
             prevSolarV = -1.0f; // Reset trackers to account for accuracy change
             lastMppt = now;
-            Serial.println(F("INA219: Recovered"));
+            //Serial.println(F("INA219: Recovered"));
         }
         lastInaRetry = now;
     }
@@ -525,11 +560,11 @@ void readSensors() {
         sys.solarV = bus + (shunt / 1000.0f);
     } else {
         float rawSolar = getSmoothedADC(PIN_SOLAR_ADC);
-        sys.solarV = rawSolar * (REF_VOLTAGE / 1023.0f) * SOLAR_DIVIDER_RATIO;
+        sys.solarV = rawSolar * (current_adc_scale / 1023.0f) * SOLAR_DIVIDER_RATIO;
     }
 
     float rawBat = getSmoothedADC(PIN_BAT_ADC);
-    sys.batV = rawBat * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
+    sys.batV = rawBat * (current_adc_scale / 1023.0f) * BAT_DIVIDER_RATIO;
 
     // 2. Current Inference (Non-linear Model)
     // Non-ideal Buck: Vbat = (Vsolar * Duty) - (Iout * R_conv) - Vdiode * (1 - Duty)
@@ -539,6 +574,9 @@ void readSensors() {
 
     float duty = (float)OCR1A / 1023.0f;
 
+    // In Synchronous mode, diode drop is replaced by FET resistance
+    float effective_V_diode = (duty > 0.01f) ? 0.02f : model_V_diode;
+
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
         if (sys.solarI < 0) sys.solarI = 0; // Harvest only
@@ -547,7 +585,7 @@ void readSensors() {
         // Inference logic (Physically derived)
         // High-duty fallback to prevent divide-by-zero or instability
         float d_clamped = (duty > 0.01f) ? duty : 0.01f;
-        float V_comp = sys.batV + model_V_diode * (1.0f - d_clamped);
+        float V_comp = sys.batV + effective_V_diode * (1.0f - d_clamped);
         float numerator = (sys.solarV * d_clamped) - V_comp;
         if (numerator < 0) numerator = 0;
 
@@ -576,15 +614,35 @@ float getSmoothedADC(uint8_t pin) {
     return (float)sum / ADC_SMOOTHING_SAMPLES;
 }
 
+float readVcc() {
+#ifdef SIMULATION
+    // In mock env, channel 14 is the 1.1V bandgap
+    int result = analogRead(14);
+    return 1.1f * 1023.0f / (float)result;
+#else
+    // ATmega328P specific measurement of Vcc relative to 1.1V internal bandgap
+    ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
+    delay(2); // Wait for Vref to settle
+    ADCSRA |= _BV(ADSC); // Start conversion
+    while (bit_is_set(ADCSRA, ADSC)); // Wait
+    uint8_t low  = ADCL;
+    uint8_t high = ADCH;
+    long result = (high << 8) | low;
+    // Vcc = 1.1V * 1023 / ADC
+    return 1125.3f / (float)result; // output is in Volts
+#endif
+}
+
 void performCalibration() {
     lastCalib = millis();
     if (ina219_present) return;
 
-    Serial.println(F("CALIB: Sampling..."));
+    //Serial.println(F("CALIB: Sampling..."));
 
     // 1. Measure Voc (Averaged)
     int oldPWM = sys.mpptPWM;
     OCR1A = 0;
+    OCR1B = MPPT_PWM_MAX_RES; // Sync FET OFF
     delay(250);
     float sumVoc = 0, voc_sq_sum = 0;
     for(int i=0; i<5; i++) {
@@ -627,14 +685,16 @@ void performCalibration() {
             // Reject outliers and large jumps
             if (new_R > 0.05f && new_R < 1.5f && fabsf(new_R - model_R_conv) < 0.5f) {
                 model_R_conv = (model_R_conv * 0.8f) + (new_R * 0.2f); // Heavier EMA for stability
-                Serial.print(F("CALIB: R_conv=")); Serial.println(model_R_conv, 3);
+                //Serial.print(F("CALIB: R_conv=")); //Serial.println(model_R_conv, 3);
             } else {
-                Serial.println(F("CALIB: Rejected Sample"));
+                //Serial.println(F("CALIB: Rejected Sample"));
             }
         }
     }
 
     OCR1A = oldPWM;
+    if (oldPWM > 50) OCR1B = constrain(oldPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
+    else OCR1B = MPPT_PWM_MAX_RES;
     prevSolarV = -1.0f;
 }
 
@@ -685,7 +745,7 @@ void updateMPPT() {
             prevSolarV = -1.0f; // Ensure trackers reset after kick
             lastMppt = now;
             sys.chargeMode = current_charge_stage;
-            Serial.print(F("MPPT Kick: ")); Serial.println(sys.mpptPWM);
+            //Serial.print(F("MPPT Kick: ")); //Serial.println(sys.mpptPWM);
         }
 
         if (sys.batV >= config.batMaxV) {
@@ -745,6 +805,14 @@ void updateMPPT() {
     // MPPT PWM is now 10-bit (0-1023)
     sys.mpptPWM = constrain(sys.mpptPWM, MPPT_PWM_MIN_RES, MPPT_PWM_MAX_RES);
     OCR1A = sys.mpptPWM;
+
+    // Synchronous FET: Complementary with deadtime
+    // Setting OCR1B > OCR1A in Phase Correct mode (OC1B inverted) ensures deadtime.
+    if (sys.mpptPWM > 50) {
+        OCR1B = constrain(sys.mpptPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
+    } else {
+        OCR1B = MPPT_PWM_MAX_RES; // Inverting mode: MAX = Always OFF
+    }
 }
 
 void runSMCMPPT() {
@@ -810,10 +878,10 @@ void updateLight() {
         lvd_active = true;
         sys.ledPWM = PWM_LED_OFF;
         motion_intensity = 0;
-        Serial.println(F("LVD: Active"));
+        //Serial.println(F("LVD: Active"));
     } else if (lvd_active && sys.batV > config.batMinV + 0.25f) {
         lvd_active = false;
-        Serial.println(F("LVD: Recovered"));
+        //Serial.println(F("LVD: Recovered"));
     }
 
     if (lvd_active) {
@@ -855,13 +923,14 @@ void updateLight() {
 }
 
 void sleepSystem() {
-    Serial.println(F("SLEEP: Start"));
+    //Serial.println(F("SLEEP: Start"));
     Serial.flush();
 
     // Kill outputs
     analogWrite(PIN_LED_PWM, 0);
     current_led_val = 0; // Reset software fade state
     OCR1A = 0; // MPPT 10-bit PWM off
+    OCR1B = 0;
 
     // Peripheral Shutdown
     power_all_disable();
@@ -894,7 +963,7 @@ void sleepSystem() {
     if (ina219.begin()) {
         ina219_present = true;
     } else {
-        Serial.println(F("INA219: Absent after wake"));
+        //Serial.println(F("INA219: Absent after wake"));
         ina219_present = false;
         lastInaRetry = millis();
     }
@@ -907,7 +976,7 @@ void sleepSystem() {
     prevSolarV = -1.0f; // Force MPPT reset after sleep gap
     lastMppt = millis();
     lastDarkTransition = 0; // Reset debounce timer
-    Serial.println(F("SLEEP: Woke up"));
+    //Serial.println(F("SLEEP: Woke up"));
 }
 
 void configureWDT() {
@@ -934,16 +1003,25 @@ void disableWDT() {
 void restoreHardware() {
     pinMode(PIN_MPPT_PWM, OUTPUT);
     digitalWrite(PIN_MPPT_PWM, LOW);
+    pinMode(PIN_MPPT_SYNC, OUTPUT);
+    digitalWrite(PIN_MPPT_SYNC, LOW);
     pinMode(PIN_LED_PWM, OUTPUT);
     digitalWrite(PIN_LED_PWM, LOW);
     pinMode(PIN_PIR, INPUT_PULLUP);
 
     // --- High Frequency 10-bit PWM for MPPT (Timer1) ---
-    // Pin 9 (OC1A)
-    TCCR1A = _BV(COM1A1) | _BV(WGM11); // Fast PWM, non-inverting, mode 14
-    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10); // mode 14, no prescaler
-    ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
+    // Mode 10: Phase Correct PWM, Top=ICR1
+    // OC1A (Pin 9): Non-Inverting
+    // OC1B (Pin 10): Inverting
+    TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(COM1B0) | _BV(WGM11);
+    TCCR1B = _BV(WGM13) | _BV(CS10);
+    ICR1 = 1023;
     OCR1A = sys.mpptPWM;
+    if (sys.mpptPWM > 50) {
+        OCR1B = constrain(sys.mpptPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
+    } else {
+        OCR1B = MPPT_PWM_MAX_RES;
+    }
 
     // --- Fully restore Timer2 (Pins 3, 11) ---
     // Mode 3 (Fast PWM), Prescaler 64
@@ -954,4 +1032,25 @@ void restoreHardware() {
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
   if (in_max == in_min) return out_min;
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+int main() {
+    setup(); ina219_present = true; sys.isDark = false; current_charge_stage = 'B';
+    for (float ocv = 3.0; ocv <= 25.0; ocv += 0.5) {
+        sim.solarOCV = ocv; sim.solarCurrentMA = 3000.0; sim.batteryV = 3.5;
+        for(int i=0; i<3000; i++) { update_sim(); loop(); }
+        float pin = (sim.solarBusV * sim.solarCurrentMA_actual) / 1000.0;
+        float duty = (float)OCR1A/1023.0f;
+        float pharv = (sim.batteryV * (sim.solarCurrentMA_actual / (duty > 0.01 ? duty : 1.0))) / 1000.0;
+        std::cout << "DATA," << "Sync,V_SWEEP," << ocv << "," << pin << "," << pharv << std::endl;
+    }
+    for (float isc = 50.0; isc <= 6000.0; isc += 200.0) {
+        sim.solarOCV = 18.0; sim.solarCurrentMA = isc; sim.batteryV = 3.5;
+        for(int i=0; i<3000; i++) { update_sim(); loop(); }
+        float pin = (sim.solarBusV * sim.solarCurrentMA_actual) / 1000.0;
+        float duty = (float)OCR1A/1023.0f;
+        float pharv = (sim.batteryV * (sim.solarCurrentMA_actual / (duty > 0.01 ? duty : 1.0))) / 1000.0;
+        std::cout << "DATA," << "Sync,P_SWEEP," << isc << "," << pin << "," << pharv << std::endl;
+    }
+    return 0;
 }

@@ -45,7 +45,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.5f, 1000.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.05f, true, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.5f, 1.0f, 10.0f, 3.5f, 0.0, 0.0, 25.0f, 0.05f, true, false, true };
 uint8_t current_adc_ref = DEFAULT;
 
 unsigned long current_time_ms = 0;
@@ -61,30 +61,45 @@ unsigned long millis() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void update_sim() {
     float duty = (float)OCR1A / 1023.0f;
-    float R_conv = 0.05f;
-    float R_sync = 0.02f;
-    float V_diode = 0.5f;
-    float Vbat = 3.5f;
-    float Isc = sim.solarOCV * 250.0f;
-    if (duty < 0.01f) {
-        sim.solarBusV = sim.solarOCV;
-        sim.solarCurrentMA = 0;
-    } else {
-        float Iout_est = 2000.0f;
-        for(int i=0; i<15; i++) {
+    float R_conv = 0.05f, R_sync = 0.02f, V_diode = 0.5f, Vbat = sim.batteryV;
+    float Isc = sim.solarCurrentMA;
+    if (duty < 0.001f) { sim.solarBusV = sim.solarOCV; sim.solarCurrentMA_actual = 0; }
+    else {
+        float Iout_est = 100.0f;
+        for(int i=0; i<30; i++) {
             float V_drop_idle = sim.sync_mode ? ((Iout_est/1000.0f) * R_sync * (1.0f - duty)) : (V_diode * (1.0f - duty));
             float V_drop_active = (Iout_est/1000.0f) * R_conv * duty;
-            sim.solarBusV = (Vbat + V_drop_idle + V_drop_active) / duty;
+            sim.solarBusV = (Vbat + V_drop_idle + V_drop_active) / (duty > 0.001 ? duty : 0.001);
             if (sim.solarBusV > sim.solarOCV) sim.solarBusV = sim.solarOCV;
-            sim.solarCurrentMA = Isc * (1.0f - exp(sim.solarBusV - sim.solarOCV));
-            if (sim.solarCurrentMA < 0) sim.solarCurrentMA = 0;
-            Iout_est = sim.solarCurrentMA / duty;
+            sim.solarCurrentMA_actual = Isc * (1.0f - exp(sim.solarBusV - sim.solarOCV));
+            if (sim.solarCurrentMA_actual < 0) sim.solarCurrentMA_actual = 0;
+            Iout_est = sim.solarCurrentMA_actual / (duty > 0.001 ? duty : 0.001);
         }
     }
-    sim.batteryV = Vbat;
-    sim.solarShuntV = sim.solarCurrentMA * 0.01;
+    float solarOutMA = (duty > 0.01f) ? (sim.solarCurrentMA_actual / (duty > 0.001 ? duty : 0.001)) : 0;
+    sim.batteryV += ((solarOutMA - 15.0f) / 1000.0f) * (100.0f / 3600000.0f);
+    sim.vcc = sim.batteryV; sim.solarShuntV = sim.solarCurrentMA_actual * 0.01;
     current_time_ms += 100;
 }
 
