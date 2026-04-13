@@ -26,10 +26,10 @@
 <line x1="60" y1="440" x2="740" y2="440" stroke="#333" stroke-width="2"/>
 <line x1="60" y1="60" x2="60" y2="440" stroke="#333" stroke-width="2"/>
 <text x="400" y="490" text-anchor="middle" font-family="Arial" font-size="14">Solar OCV (V)</text>
-<polyline points="60.0,77.19379269139478 286.5911362879041,82.49103997238382 739.7734088637121,92.57465781833264" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="60.0,88.98967275395779 121.8125624943187,96.98518399041455 183.6251249886374,97.65597535390953 307.2502499772748,90.39816080173097 492.6879374602309,99.71235555760683 739.9381874375058,89.69459448622695" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
 <line x1="600" y1="80" x2="630" y2="80" stroke="red" stroke-width="3"/>
 <text x="640" y="85" font-family="Arial" font-size="12">Diode Rectification</text>
-<polyline points="60.0,77.18500456193328 286.5911362879041,82.49082352224434 739.7734088637121,92.56132248008691" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="60.0,88.96443066631315 121.8125624943187,97.36022927283278 183.6251249886374,98.74140304058676 307.2502499772748,100.90450901464669 492.6879374602309,103.44731028993613 739.9381874375058,96.0368990801656" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
 <line x1="600" y1="110" x2="630" y2="110" stroke="blue" stroke-width="3"/>
 <text x="640" y="115" font-family="Arial" font-size="12">Synchronous Rectification</text>
 </svg>
