@@ -26,10 +26,10 @@
 <line x1="60" y1="440" x2="740" y2="440" stroke="#333" stroke-width="2"/>
 <line x1="60" y1="60" x2="60" y2="440" stroke="#333" stroke-width="2"/>
 <text x="400" y="490" text-anchor="middle" font-family="Arial" font-size="14">Input Power (W)</text>
-<polyline points="60.0,67.69192033794513 610.8184596499648,68.29736557825822" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="60.3061984011091,73.84941075530878 387.7390239606356,83.31355974591105 739.9758518611113,92.78948509955319" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
 <line x1="600" y1="80" x2="630" y2="80" stroke="red" stroke-width="3"/>
 <text x="640" y="85" font-family="Arial" font-size="12">Diode Rectification</text>
-<polyline points="523.2154847669115,67.74442125541822 739.9912172185913,69.80118629959907" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
+<polyline points="60.0,72.68663038975353 387.7390239606356,83.31355974591105 739.9758518611113,92.78948509955319" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
 <line x1="600" y1="110" x2="630" y2="110" stroke="blue" stroke-width="3"/>
 <text x="640" y="115" font-family="Arial" font-size="12">Synchronous Rectification</text>
 </svg>

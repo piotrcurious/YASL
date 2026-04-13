@@ -43,26 +43,27 @@ int main() {{
     for (float ocv : ocv_sweep) {{
         sim.solarOCV = ocv; sim.solarCurrentMA = 5000.0; sim.batteryV = 12.0;
         sys.mpptPWM = 500;
-        for(int i=0; i<2000; i++) {{ update_sim(); loop(); }}
+        for(int i=0; i<3000; i++) {{ update_sim(); loop(); }}
 
         float pin = (sim.solarBusV * sim.solarCurrentMA_actual) / 1000.0;
         float duty = (float)OCR1A/1023.0f;
         float solarOutMA = (duty > 0.001f) ? (sim.solarCurrentMA_actual / duty) : 0;
         float pout = (sim.batteryV * solarOutMA) / 1000.0;
 
-        std::cout << "DATA," << "{mode_name},V_SWEEP," << ocv << "," << pin << "," << pout << "," << (float)OCR1A << std::endl;
+        std::cerr << "DATA," << "{mode_name},V_SWEEP," << ocv << "," << pin << "," << pout << "," << (float)OCR1A << "," << (float)OCR1B << std::endl;
+        std::cout << "DATA," << "{mode_name},V_SWEEP," << ocv << "," << pin << "," << pout << "," << (float)OCR1A << "," << (float)OCR1B << std::endl;
     }}
 
     for (float isc = 500.0; isc <= 6000.0; isc += 1000.0) {{
         sim.solarOCV = 20.0; sim.solarCurrentMA = isc; sim.batteryV = 12.0;
-        for(int i=0; i<2000; i++) {{ update_sim(); loop(); }}
+        for(int i=0; i<3000; i++) {{ update_sim(); loop(); }}
 
         float pin = (sim.solarBusV * sim.solarCurrentMA_actual) / 1000.0;
         float duty = (float)OCR1A/1023.0f;
         float solarOutMA = (duty > 0.001f) ? (sim.solarCurrentMA_actual / duty) : 0;
         float pout = (sim.batteryV * solarOutMA) / 1000.0;
 
-        std::cout << "DATA," << "{mode_name},P_SWEEP," << isc << "," << pin << "," << pout << "," << (float)OCR1A << std::endl;
+        std::cout << "DATA," << "{mode_name},P_SWEEP," << isc << "," << pin << "," << pout << "," << (float)OCR1A << "," << (float)OCR1B << std::endl;
     }}
     return 0;
 }}

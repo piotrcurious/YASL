@@ -72,7 +72,8 @@ if __name__ == "__main__":
     results = []
     for f in sorted(ino_files):
         print(f"Testing {f}...", end=" ", flush=True)
-        env = "v2_4_sync/test_env" if "v2_4" in f else "test_env"
+        # Always use root test_env as we cleaned up the others
+        env = "test_env"
         success, msg = run_compilation_test(f, env)
         status = "OK" if success else "FAIL"
         print(status)
