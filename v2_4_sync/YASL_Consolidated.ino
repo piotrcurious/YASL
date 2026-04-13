@@ -3,7 +3,7 @@
  * YASL (Yet Another Solar Lamp) - Consolidated Version
  *
  * This version combines features from all project iterations:
- * - Simple P&O MPPT with CC/CV (Constant Current/Constant Voltage) safety.
+ * - Advanced Sliding Mode Control (SMC) MPPT with CC/CV safety.
  * - Robust ADC sensor reading with averaging.
  * - PIR motion detection with smooth dimming.
  * - Advanced Sleep Management (WDT for timed wake + INT0 for motion wake).
