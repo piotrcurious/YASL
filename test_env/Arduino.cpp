@@ -17,6 +17,7 @@ int TCCR1A = 0;
 int TCCR1B = 0;
 int ICR1 = 0;
 int OCR1A = 0;
+int OCR1B = 0;
 int WDTCSR = 0;
 int MCUSR = 0;
 int WDRF = 3; // ATmega328P bit 3
@@ -44,7 +45,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.2f, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.2f, false, false, true };
 uint8_t current_adc_ref = DEFAULT;
 
 unsigned long current_time_ms = 0;
@@ -55,12 +56,14 @@ unsigned long millis() {
 
 void update_sim() {
     // Non-Ideal Buck Converter Model:
-    // Vbat = (Vsolar * Duty) - (Iout * R_conv) - V_diode
+    // Diode Mode: Vbat = (Vsolar * Duty) - (Iout * R_conv) - V_diode * (1 - Duty)
+    // Sync Mode:  Vbat = (Vsolar * Duty) - (Iout * R_conv) - (Iout * R_sync) * (1 - Duty)
     // Iin = Iout * Duty (ignoring switching losses for now)
     // R_conv(T) = R_base * (1 + alpha * (T - 25))
 
     float alpha = 0.004f; // Thermal coefficient (Copper/Silicon avg)
     float R_curr = sim.R_conv_base * (1.0f + alpha * (sim.tempC - 25.0f));
+    float R_sync = R_curr; // Assume identical FETs
     float V_diode = 0.4f; // Schottky or Body Diode drop
 
     float duty = (float)OCR1A / 1023.0f;
@@ -76,7 +79,8 @@ void update_sim() {
         // Iterative solver for equilibrium
         float Iout_est = 0.0f;
         for (int i=0; i<5; ++i) {
-            float Vsolar_est = (sim.batteryV + V_diode + (Iout_est/1000.0f) * R_curr) / duty;
+            float V_drop_idle = sim.sync_mode ? ((Iout_est/1000.0f) * R_sync * (1.0f - duty)) : (V_diode * (1.0f - duty));
+            float Vsolar_est = (sim.batteryV + V_drop_idle + (Iout_est/1000.0f) * R_curr) / duty;
             if (Vsolar_est > sim.solarOCV) Vsolar_est = sim.solarOCV;
 
             // PV Panel Model: simplified diode equation
@@ -193,8 +197,12 @@ long map(long x, long in_min, long in_max, long out_min, long out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-void MockWire::beginTransmission(uint8_t addr) {}
+void MockWire::beginTransmission(uint8_t addr) {
+}
+
 int MockWire::endTransmission() {
     return sim.ina219_ok ? 0 : 4; // 4 = other error
 }
-void MockWire::write(uint8_t val) {}
+
+void MockWire::write(uint8_t val) {
+}

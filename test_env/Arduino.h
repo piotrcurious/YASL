@@ -46,8 +46,13 @@ extern int TCCR1A;
 extern int TCCR1B;
 extern int ICR1;
 extern int OCR1A;
+extern int OCR1B;
 #define _BV(bit) (1 << (bit))
 #define COM1A1 7
+#define COM1A0 6
+#define COM1B1 5
+#define COM1B0 4
+#define WGM10 0
 #define WGM11 1
 #define WGM12 3
 #define WGM13 4
@@ -294,6 +299,7 @@ struct SimSensors {
     double consumedMAH;
     float tempC;      // Simulation Temperature
     float R_conv_base; // Base resistance at 25C
+    bool  sync_mode;   // Synchronous switching enabled
     bool  motion;
     bool  ina219_ok;
 };

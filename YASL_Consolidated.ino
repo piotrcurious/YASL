@@ -27,7 +27,8 @@ const uint8_t PIN_SOLAR_ADC = A0;   // Raw solar ADC (backup/redundant)
 const uint8_t PIN_BAT_ADC   = A1;   // Main Battery Voltage Divider
 const uint8_t PIN_LED_PWM   = 3;    // LED Mosfet (Timer2)
 const uint8_t PIN_PIR       = 2;    // Motion Sensor (D2 is INT0)
-const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
+const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT (Main FET, Timer1 OC1A)
+const uint8_t PIN_MPPT_SYNC = 10;   // Solar MPPT (Sync FET, Timer1 OC1B)
 
 // --- Tuning & Defaults ---
 
@@ -62,6 +63,7 @@ const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 #define MPPT_INTERVAL_MS        100
 #define MPPT_PWM_MAX_RES        1023   // 10-bit range (Full ICR1)
 #define MPPT_PWM_MIN_RES        0
+#define SYNC_FET_DEADTIME       12     // Deadtime in ticks (~0.75us)
 
 // Sliding Mode Control (SMC) Tuning
 #define SMC_BASE_GAIN           2.0f
@@ -151,7 +153,7 @@ char current_charge_stage = 'B';
 
 // Non-linear Inference Parameters
 float model_R_conv = DEF_MODEL_R_CONV;
-float model_V_diode = DEF_MODEL_V_DIODE;
+float model_V_diode = DEF_MODEL_V_DIODE; // Set to ~0.01 in sync mode
 
 // Timers
 unsigned long lastLog = 0;
@@ -215,7 +217,7 @@ void setup() {
     Wire.begin();
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v2.0 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v2.4 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -567,6 +569,9 @@ void readSensors() {
 
     float duty = (float)OCR1A / 1023.0f;
 
+    // In Synchronous mode, diode drop is replaced by FET resistance
+    float effective_V_diode = (duty > 0.01f) ? 0.02f : model_V_diode;
+
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
         if (sys.solarI < 0) sys.solarI = 0; // Harvest only
@@ -575,7 +580,7 @@ void readSensors() {
         // Inference logic (Physically derived)
         // High-duty fallback to prevent divide-by-zero or instability
         float d_clamped = (duty > 0.01f) ? duty : 0.01f;
-        float V_comp = sys.batV + model_V_diode * (1.0f - d_clamped);
+        float V_comp = sys.batV + effective_V_diode * (1.0f - d_clamped);
         float numerator = (sys.solarV * d_clamped) - V_comp;
         if (numerator < 0) numerator = 0;
 
@@ -632,6 +637,7 @@ void performCalibration() {
     // 1. Measure Voc (Averaged)
     int oldPWM = sys.mpptPWM;
     OCR1A = 0;
+    OCR1B = MPPT_PWM_MAX_RES; // Sync FET OFF
     delay(250);
     float sumVoc = 0, voc_sq_sum = 0;
     for(int i=0; i<5; i++) {
@@ -682,6 +688,8 @@ void performCalibration() {
     }
 
     OCR1A = oldPWM;
+    if (oldPWM > 50) OCR1B = constrain(oldPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
+    else OCR1B = MPPT_PWM_MAX_RES;
     prevSolarV = -1.0f;
 }
 
@@ -792,6 +800,14 @@ void updateMPPT() {
     // MPPT PWM is now 10-bit (0-1023)
     sys.mpptPWM = constrain(sys.mpptPWM, MPPT_PWM_MIN_RES, MPPT_PWM_MAX_RES);
     OCR1A = sys.mpptPWM;
+
+    // Synchronous FET: Complementary with deadtime
+    // Setting OCR1B > OCR1A in Phase Correct mode (OC1B inverted) ensures deadtime.
+    if (sys.mpptPWM > 50) {
+        OCR1B = constrain(sys.mpptPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
+    } else {
+        OCR1B = MPPT_PWM_MAX_RES; // Inverting mode: MAX = Always OFF
+    }
 }
 
 void runSMCMPPT() {
@@ -909,6 +925,7 @@ void sleepSystem() {
     analogWrite(PIN_LED_PWM, 0);
     current_led_val = 0; // Reset software fade state
     OCR1A = 0; // MPPT 10-bit PWM off
+    OCR1B = 0;
 
     // Peripheral Shutdown
     power_all_disable();
@@ -981,16 +998,25 @@ void disableWDT() {
 void restoreHardware() {
     pinMode(PIN_MPPT_PWM, OUTPUT);
     digitalWrite(PIN_MPPT_PWM, LOW);
+    pinMode(PIN_MPPT_SYNC, OUTPUT);
+    digitalWrite(PIN_MPPT_SYNC, LOW);
     pinMode(PIN_LED_PWM, OUTPUT);
     digitalWrite(PIN_LED_PWM, LOW);
     pinMode(PIN_PIR, INPUT_PULLUP);
 
     // --- High Frequency 10-bit PWM for MPPT (Timer1) ---
-    // Pin 9 (OC1A)
-    TCCR1A = _BV(COM1A1) | _BV(WGM11); // Fast PWM, non-inverting, mode 14
-    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10); // mode 14, no prescaler
-    ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
+    // Mode 10: Phase Correct PWM, Top=ICR1
+    // OC1A (Pin 9): Non-Inverting
+    // OC1B (Pin 10): Inverting
+    TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(COM1B0) | _BV(WGM11);
+    TCCR1B = _BV(WGM13) | _BV(CS10);
+    ICR1 = 1023;
     OCR1A = sys.mpptPWM;
+    if (sys.mpptPWM > 50) {
+        OCR1B = constrain(sys.mpptPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
+    } else {
+        OCR1B = MPPT_PWM_MAX_RES;
+    }
 
     // --- Fully restore Timer2 (Pins 3, 11) ---
     // Mode 3 (Fast PWM), Prescaler 64

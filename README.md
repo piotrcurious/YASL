@@ -5,13 +5,17 @@ Created by BingAI, Consolidated
 ## Project Overview
 YASL is a solar-powered motion sensor lamp project. This repository contains various iterations of the firmware, ranging from basic implementations to advanced versions with MPPT charging and sophisticated sleep modes.
 
-## Consolidated Version: `YASL_Consolidated.ino`
+## Consolidated Version: `YASL_Consolidated.ino` (v2.4)
 The `YASL_Consolidated.ino` file represents the most stable and feature-rich version of the firmware, combining the best ideas from all previous iterations.
 
 ### Key Features:
-- **MPPT Charging**: Perturb & Observe (P&O) algorithm to maximize solar panel efficiency.
-- **CC/CV Logic**: Constant Current and Constant Voltage charging phases for battery safety and longevity.
-- **Robust Sensors**: Averaged ADC readings for battery and solar monitoring to reduce noise.
+- **Synchronous Switching**: High-efficiency buck conversion using complementary FET driving with hardware dead-time protection.
+- **SMC MPPT**: Advanced Sliding Mode Control algorithm for fast and stable Maximum Power Point Tracking.
+- **Dynamic Vref Compensation**: Per-cycle supply voltage measurement via internal 1.1V bandgap for accurate operation when powered directly from a battery.
+- **Low-Light Optimized**: Dynamic startup thresholds and predictive MPPT "Smart Kick" for maximum overcast harvesting.
+- **3-Stage Charging**: Fully implemented Bulk, Absorption (CV), and Float stages for battery longevity.
+- **Sensorless Mode**: Physically-derived solar current inference model for operation without an INA219 sensor.
+- **Robust Sensors**: Averaged ADC readings and non-blocking I2C recovery logic.
 - **Motion Detection**: PIR sensor integration with smooth PWM dimming transitions.
 - **Advanced Power Management**:
   - Periodic Watchdog Timer (WDT) sleep for system checks.
@@ -25,14 +29,14 @@ The project includes a mock Arduino environment in `test_env/` to verify compila
 ### Running Tests
 The test environment requires `g++` to be installed on your system. To test the files, use the provided Python scripts:
 
-**Compilation Test:**
+**Full Validation Suite:**
 ```bash
-python3 test_env/test_harness.py
-```
-
-**Scenario Simulation:**
-```bash
-python3 test_env/simulate_scenario.py
+python3 test_env/test_harness.py        # Compilation check
+python3 test_env/unit_tests.py          # Math logic validation
+python3 test_env/simulate_scenario.py   # Full day/night cycle simulation
+python3 test_env/stress_test.py         # Solar fluctuation stress
+python3 test_env/test_vcc_dependency.py # Voltage reference accuracy test
+python3 test_env/test_synchronous.py    # PWM timing and dead-time verification
 ```
 
 ## Disclaimer
