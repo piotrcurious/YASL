@@ -17,6 +17,7 @@ int TCCR1A = 0;
 int TCCR1B = 0;
 int ICR1 = 0;
 int OCR1A = 0;
+int OCR1B = 0;
 int WDTCSR = 0;
 int MCUSR = 0;
 int WDRF = 3; // ATmega328P bit 3
@@ -44,7 +45,7 @@ uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.7f, 2.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.2f, false, true };
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 3.5f, 1000.0f, 10.0f, 5.0f, 0.0, 0.0, 25.0f, 0.05f, true, false, true };
 uint8_t current_adc_ref = DEFAULT;
 
 unsigned long current_time_ms = 0;
@@ -53,74 +54,38 @@ unsigned long millis() {
     return current_time_ms;
 }
 
+
+
+
+
+
+
+
 void update_sim() {
-    // Non-Ideal Buck Converter Model:
-    // Vbat = (Vsolar * Duty) - (Iout * R_conv) - V_diode
-    // Iin = Iout * Duty (ignoring switching losses for now)
-    // R_conv(T) = R_base * (1 + alpha * (T - 25))
-
-    float alpha = 0.004f; // Thermal coefficient (Copper/Silicon avg)
-    float R_curr = sim.R_conv_base * (1.0f + alpha * (sim.tempC - 25.0f));
-    float V_diode = 0.4f; // Schottky or Body Diode drop
-
     float duty = (float)OCR1A / 1023.0f;
-
+    float R_conv = 0.05f;
+    float R_sync = 0.02f;
+    float V_diode = 0.5f;
+    float Vbat = 3.5f;
+    float Isc = sim.solarOCV * 250.0f;
     if (duty < 0.01f) {
         sim.solarBusV = sim.solarOCV;
         sim.solarCurrentMA = 0;
     } else {
-        // We need to find Iout that satisfies both the Panel and the Converter.
-        // Ipanel(Vsolar) = Iout * Duty
-        // Vsolar = (Vbat + V_diode + Iout * R_curr) / Duty
-
-        // Iterative solver for equilibrium
-        float Iout_est = 0.0f;
-        for (int i=0; i<5; ++i) {
-            float Vsolar_est = (sim.batteryV + V_diode + (Iout_est/1000.0f) * R_curr) / duty;
-            if (Vsolar_est > sim.solarOCV) Vsolar_est = sim.solarOCV;
-
-            // PV Panel Model: simplified diode equation
-            float Isc = 3000.0f; // 3A
-            float Io = 0.001f;
-            float Vt = 2.0f;
-            float Ipanel = Isc - Io * (exp(Vsolar_est / (Vt * (sim.tempC + 273.15f) / 298.15f)) - 1.0f);
-
-            // Limit to MPP - simplified for stable sim testing
-            if (Vsolar_est < 15.0f) {
-                Ipanel *= (Vsolar_est / 15.0f);
-            }
-            if (Ipanel < 0) Ipanel = 0;
-
-            Iout_est = Ipanel / duty;
-            sim.solarBusV = Vsolar_est;
-            sim.solarCurrentMA = Ipanel;
+        float Iout_est = 2000.0f;
+        for(int i=0; i<15; i++) {
+            float V_drop_idle = sim.sync_mode ? ((Iout_est/1000.0f) * R_sync * (1.0f - duty)) : (V_diode * (1.0f - duty));
+            float V_drop_active = (Iout_est/1000.0f) * R_conv * duty;
+            sim.solarBusV = (Vbat + V_drop_idle + V_drop_active) / duty;
+            if (sim.solarBusV > sim.solarOCV) sim.solarBusV = sim.solarOCV;
+            sim.solarCurrentMA = Isc * (1.0f - exp(sim.solarBusV - sim.solarOCV));
+            if (sim.solarCurrentMA < 0) sim.solarCurrentMA = 0;
+            Iout_est = sim.solarCurrentMA / duty;
         }
     }
-
-    float chargeAH = sim.batteryCapAH * (sim.batteryV - 3.0f) / (4.2f - 3.0f);
-    unsigned long step_ms = 100;
-    current_time_ms += step_ms;
-
-    // Net current (Solar in - System out)
-    float solarOutMA = (duty > 0.01f) ? (sim.solarCurrentMA / duty) : 0;
-    float netMA = solarOutMA - sim.systemCurrentMA;
-    float deltaAH = (netMA / 1000.0f) * (step_ms / 3600000.0f);
-
-    // Stats
-    if (sim.solarCurrentMA > 0) sim.harvestedMAH += (sim.solarCurrentMA) * (step_ms / 3600000.0);
-    sim.consumedMAH += (sim.systemCurrentMA) * (step_ms / 3600000.0);
-
-    // Self-heating: simple model
-    // dT = (P_loss * R_thermal - (T - T_ambient)) * dt / C_thermal
-    float P_loss = (solarOutMA / 1000.0f) * (solarOutMA / 1000.0f) * R_curr;
-    sim.tempC += (P_loss * 10.0f - (sim.tempC - 25.0f)) * (step_ms / 10000.0f);
-
-    chargeAH += deltaAH;
-    if (chargeAH < 0) chargeAH = 0;
-    if (chargeAH > sim.batteryCapAH) chargeAH = sim.batteryCapAH;
-
-    // Linear Vbat model: 3.0V (0%) to 4.2V (100%)
-    sim.batteryV = 3.0f + (chargeAH / sim.batteryCapAH) * (4.2f - 3.0f);
+    sim.batteryV = Vbat;
+    sim.solarShuntV = sim.solarCurrentMA * 0.01;
+    current_time_ms += 100;
 }
 
 void delay(unsigned long ms) {
@@ -193,8 +158,12 @@ long map(long x, long in_min, long in_max, long out_min, long out_max) {
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
-void MockWire::beginTransmission(uint8_t addr) {}
+void MockWire::beginTransmission(uint8_t addr) {
+}
+
 int MockWire::endTransmission() {
     return sim.ina219_ok ? 0 : 4; // 4 = other error
 }
-void MockWire::write(uint8_t val) {}
+
+void MockWire::write(uint8_t val) {
+}
