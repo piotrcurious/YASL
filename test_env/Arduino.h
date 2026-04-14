@@ -14,8 +14,6 @@
 #include <queue>
 #include <algorithm>
 
-#include "Wire.h"
-
 typedef uint8_t byte;
 typedef bool boolean;
 
@@ -144,7 +142,7 @@ auto max(T a, U b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
 
 #define SIMULATION 1
 
-// String class mock (Move up so MockSerial can use it)
+// String class mock
 class String : public std::string {
 public:
     String(const char* s = "") : std::string(s) {}
@@ -281,28 +279,24 @@ inline String operator+(const char* a, const String& b) {
 }
 
 // --- Simulation Extensions ---
-struct SimStats {
-    double harvestedMAH;
-    double consumedMAH;
-};
-
 struct SimSensors {
     float solarBusV;
-    float solarOCV; // Open Circuit Voltage
+    float solarOCV;
     float solarShuntV;
     float solarCurrentMA;
     float solarCurrentMA_actual;
     float batteryV;
     float batteryCapAH;
     float systemCurrentMA;
-    float vcc;         // Supply voltage (Influences ADC ref)
+    float vcc;
     double harvestedMAH;
     double consumedMAH;
-    float tempC;      // Simulation Temperature
-    float R_conv_base; // Base resistance at 25C
-    bool  sync_mode;   // Synchronous switching enabled
+    float tempC;
+    float R_conv_base;
+    bool  sync_mode;
     bool  motion;
     bool  ina219_ok;
+    bool  low_spec_inductor;
 };
 extern SimSensors sim;
 extern unsigned long current_time_ms;

@@ -1,6 +1,6 @@
 # MPPT Efficiency Benchmarking Report
 
-Comparing Diode Rectification (v2.3.1) vs Synchronous Rectification (v2.4.0).
+Comparative analysis of Diode (v2.3.1) vs Synchronous (v2.4.0) rectification across multiple hardware grades.
 
 ## 1. Efficiency vs Solar Voltage
 ![Efficiency vs Voltage](efficiency_vs_voltage.svg)
@@ -8,9 +8,11 @@ Comparing Diode Rectification (v2.3.1) vs Synchronous Rectification (v2.4.0).
 ## 2. Efficiency vs Input Power
 ![Efficiency vs Power](efficiency_vs_power.svg)
 
-## 3. Comparative Analysis
+## 3. Hardware Comparison Summary
 
-| Configuration | Peak Efficiency | Startup OCV | 5W Efficiency | 20W Efficiency |
-| :--- | :---: | :---: | :---: | :---: |
-| Diode | 92.6% | 13.0V | 91.6% | 89.0% |
-| Sync | 97.0% | 13.0V | 97.0% | 94.4% |
+| Configuration | Inductor Spec | Peak Efficiency | 20W Efficiency |
+| :--- | :--- | :---: | :---: |
+| Diode | High-Spec | 93.5% | 89.8% |
+| Diode | Low-Spec | 89.1% | 88.2% |
+| Sync | High-Spec | 95.3% | 92.8% |
+| Sync | Low-Spec | 91.0% | 91.0% |

@@ -1,35 +1,74 @@
 <svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
 <rect width="100%" height="100%" fill="#fff"/>
 <text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">Efficiency vs Input Power</text>
-<line x1="60" y1="440.0" x2="740" y2="440.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="445.0" text-anchor="end" font-family="Arial" font-size="12">0%</text>
-<line x1="60" y1="402.0" x2="740" y2="402.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="407.0" text-anchor="end" font-family="Arial" font-size="12">10%</text>
-<line x1="60" y1="364.0" x2="740" y2="364.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="369.0" text-anchor="end" font-family="Arial" font-size="12">20%</text>
-<line x1="60" y1="326.0" x2="740" y2="326.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="331.0" text-anchor="end" font-family="Arial" font-size="12">30%</text>
-<line x1="60" y1="288.0" x2="740" y2="288.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="293.0" text-anchor="end" font-family="Arial" font-size="12">40%</text>
-<line x1="60" y1="250.0" x2="740" y2="250.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="255.0" text-anchor="end" font-family="Arial" font-size="12">50%</text>
-<line x1="60" y1="212.0" x2="740" y2="212.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="217.0" text-anchor="end" font-family="Arial" font-size="12">60%</text>
-<line x1="60" y1="174.0" x2="740" y2="174.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="179.0" text-anchor="end" font-family="Arial" font-size="12">70%</text>
-<line x1="60" y1="136.0" x2="740" y2="136.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="141.0" text-anchor="end" font-family="Arial" font-size="12">80%</text>
-<line x1="60" y1="98.0" x2="740" y2="98.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="103.0" text-anchor="end" font-family="Arial" font-size="12">90%</text>
-<line x1="60" y1="60.0" x2="740" y2="60.0" stroke="#eee" stroke-width="1"/>
-<text x="50" y="65.0" text-anchor="end" font-family="Arial" font-size="12">100%</text>
-<line x1="60" y1="440" x2="740" y2="440" stroke="#333" stroke-width="2"/>
-<line x1="60" y1="60" x2="60" y2="440" stroke="#333" stroke-width="2"/>
-<text x="400" y="490" text-anchor="middle" font-family="Arial" font-size="14">Input Power (W)</text>
-<polyline points="60.01225248008216,91.96915002153202 196.00262693172962,101.92414048485841 332.0747499304852,88.14948753885994 467.6214865833181,99.55723513173058 603.3211341875761,89.95159458783223 739.9901980159342,90.84871951491249" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<line x1="80" y1="420.0" x2="750" y2="420.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="425.0" text-anchor="end" font-family="Arial" font-size="12">0%</text>
+<line x1="80" y1="384.0" x2="750" y2="384.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="389.0" text-anchor="end" font-family="Arial" font-size="12">10%</text>
+<line x1="80" y1="348.0" x2="750" y2="348.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="353.0" text-anchor="end" font-family="Arial" font-size="12">20%</text>
+<line x1="80" y1="312.0" x2="750" y2="312.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="317.0" text-anchor="end" font-family="Arial" font-size="12">30%</text>
+<line x1="80" y1="276.0" x2="750" y2="276.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="281.0" text-anchor="end" font-family="Arial" font-size="12">40%</text>
+<line x1="80" y1="240.0" x2="750" y2="240.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="245.0" text-anchor="end" font-family="Arial" font-size="12">50%</text>
+<line x1="80" y1="204.0" x2="750" y2="204.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="209.0" text-anchor="end" font-family="Arial" font-size="12">60%</text>
+<line x1="80" y1="168.00000000000003" x2="750" y2="168.00000000000003" stroke="#eee" stroke-width="1"/>
+<text x="70" y="173.00000000000003" text-anchor="end" font-family="Arial" font-size="12">70%</text>
+<line x1="80" y1="132.0" x2="750" y2="132.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="137.0" text-anchor="end" font-family="Arial" font-size="12">80%</text>
+<line x1="80" y1="96.0" x2="750" y2="96.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="101.0" text-anchor="end" font-family="Arial" font-size="12">90%</text>
+<line x1="80" y1="60.0" x2="750" y2="60.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="65.0" text-anchor="end" font-family="Arial" font-size="12">100%</text>
+<line x1="80.0" y1="420" x2="80.0" y2="425" stroke="#333" stroke-width="2"/>
+<text x="80.0" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">6.9</text>
+<line x1="175.71275298056088" y1="420" x2="175.71275298056088" y2="425" stroke="#333" stroke-width="2"/>
+<text x="175.71275298056088" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">15.8</text>
+<line x1="271.42550596112176" y1="420" x2="271.42550596112176" y2="425" stroke="#333" stroke-width="2"/>
+<text x="271.42550596112176" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">24.7</text>
+<line x1="367.1382589416825" y1="420" x2="367.1382589416825" y2="425" stroke="#333" stroke-width="2"/>
+<text x="367.1382589416825" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">33.7</text>
+<line x1="462.8510119222435" y1="420" x2="462.8510119222435" y2="425" stroke="#333" stroke-width="2"/>
+<text x="462.8510119222435" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">42.6</text>
+<line x1="558.5637649028043" y1="420" x2="558.5637649028043" y2="425" stroke="#333" stroke-width="2"/>
+<text x="558.5637649028043" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">51.5</text>
+<line x1="654.2765178833652" y1="420" x2="654.2765178833652" y2="425" stroke="#333" stroke-width="2"/>
+<text x="654.2765178833652" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">60.4</text>
+<line x1="749.9892708639261" y1="420" x2="749.9892708639261" y2="425" stroke="#333" stroke-width="2"/>
+<text x="749.9892708639261" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">69.4</text>
+<line x1="80" y1="420" x2="750" y2="420" stroke="#333" stroke-width="2"/>
+<line x1="80" y1="60" x2="80" y2="420" stroke="#333" stroke-width="2"/>
+<text x="400" y="485" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Input Power (W)</text>
+<text x="20" y="250" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" transform="rotate(-90, 20, 250)">Efficiency (%)</text>
+<polyline points="80.22048374631967,93.08003065611888 303.5445542588425,96.68747657083537 526.5078039251983,83.54482187275238 749.2865124510823,92.89547137896494" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="80.22048374631967" cy="93.08003065611888" r="4" fill="red"/>
+<circle cx="303.5445542588425" cy="96.68747657083537" r="4" fill="red"/>
+<circle cx="526.5078039251983" cy="83.54482187275238" r="4" fill="red"/>
+<circle cx="749.2865124510823" cy="92.89547137896494" r="4" fill="red"/>
+<polyline points="80.25310031998448,99.11926838452229 303.4909085784727,102.50585834697273 526.7577927957213,109.29759658561909 749.9656667645634,123.61142873622055" fill="none" stroke="orange" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="80.25310031998448" cy="99.11926838452229" r="4" fill="orange"/>
+<circle cx="303.4909085784727" cy="102.50585834697273" r="4" fill="orange"/>
+<circle cx="526.7577927957213" cy="109.29759658561909" r="4" fill="orange"/>
+<circle cx="749.9656667645634" cy="123.61142873622055" r="4" fill="orange"/>
+<polyline points="80.0,86.86690060104922 303.54991882687943,85.83245926102143 526.7738864998323,76.89250676119639 748.8326699951543,79.98495217767413" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="80.0" cy="86.86690060104922" r="4" fill="blue"/>
+<circle cx="303.54991882687943" cy="85.83245926102143" r="4" fill="blue"/>
+<circle cx="526.7738864998323" cy="76.89250676119639" r="4" fill="blue"/>
+<circle cx="748.8326699951543" cy="79.98495217767413" r="4" fill="blue"/>
+<polyline points="80.25739197441406,92.81381322031012 302.70124416343003,92.38940740151673 526.4359187135029,112.5676455554273 749.9892708639261,120.33766042763403" fill="none" stroke="cyan" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="80.25739197441406" cy="92.81381322031012" r="4" fill="cyan"/>
+<circle cx="302.70124416343003" cy="92.38940740151673" r="4" fill="cyan"/>
+<circle cx="526.4359187135029" cy="112.5676455554273" r="4" fill="cyan"/>
+<circle cx="749.9892708639261" cy="120.33766042763403" r="4" fill="cyan"/>
 <line x1="600" y1="80" x2="630" y2="80" stroke="red" stroke-width="3"/>
-<text x="640" y="85" font-family="Arial" font-size="12">Diode Rectification</text>
-<polyline points="60.0,71.4334650056586 195.75463673486686,81.2977407985208 331.7042349328009,87.00744846700155 467.6538331307349,101.26623456942826 603.5554016067471,93.29888428036162 738.8884550069472,95.22353929560637" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
-<line x1="600" y1="110" x2="630" y2="110" stroke="blue" stroke-width="3"/>
-<text x="640" y="115" font-family="Arial" font-size="12">Synchronous Rectification</text>
+<text x="640" y="85" font-family="Arial" font-size="12">Diode (High-Spec L)</text>
+<line x1="600" y1="105" x2="630" y2="105" stroke="orange" stroke-width="3"/>
+<text x="640" y="110" font-family="Arial" font-size="12">Diode (Low-Spec L)</text>
+<line x1="600" y1="130" x2="630" y2="130" stroke="blue" stroke-width="3"/>
+<text x="640" y="135" font-family="Arial" font-size="12">Sync (High-Spec L)</text>
+<line x1="600" y1="155" x2="630" y2="155" stroke="cyan" stroke-width="3"/>
+<text x="640" y="160" font-family="Arial" font-size="12">Sync (Low-Spec L)</text>
 </svg>
