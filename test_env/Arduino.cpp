@@ -4,182 +4,98 @@
 #include <algorithm>
 
 #include "Arduino.h"
-#include "avr/interrupt.h"
-
-#define DEFAULT 1
-#define INTERNAL 2
-#define EXTERNAL 3
-
 #include "EEPROM.h"
-#include "Adafruit_INA219.h"
 #include "Wire.h"
+#include "ESP8266WiFi.h"
+#include "Adafruit_INA219.h"
 
-int TCCR2A = 0;
-int TCCR2B = 0;
-int TCCR1A = 0;
-int TCCR1B = 0;
-int ICR1 = 0;
-int OCR1A = 0;
-int OCR1B = 0;
-int WDTCSR = 0;
-int MCUSR = 0;
-int WDRF = 3;
-int EIMSK = 0;
-int INT0 = 0;
-int EIFR = 0;
-int INTF0 = 0;
-int ADCSRA = 0;
-int ADEN = 7;
-int EICRA = 0;
-int ISC01 = 1;
-int ISC00 = 0;
-int WDCE = 4;
-int WDE = 3;
-int WDIE = 6;
-int WDP3 = 5;
-int WDP0 = 0;
+int TCCR2A=0, TCCR2B=0, TCCR1A=0, TCCR1B=0, ICR1=1023, OCR1A=0, OCR1B=0, WDTCSR=0, MCUSR=0, WDRF=0, ADCSRA=0, ADEN=0, EICRA=0, ISC01=0, ISC00=0, WDCE=0, WDE=0, WDIE=0, WDP3=0, WDP0=0, EIMSK=0, INT0=0, EIFR=0, INTF0=0;
 
 MockSerial Serial;
 MockWire Wire;
 MockEEPROM EEPROM;
+MockWiFiClass WiFi;
 
-uint8_t mock_eeprom_storage[1024] = {0};
+uint8_t mock_eeprom_storage[1024];
 uint8_t MockEEPROM::read(int addr) { return mock_eeprom_storage[addr % 1024]; }
 void MockEEPROM::write(int addr, uint8_t val) { mock_eeprom_storage[addr % 1024] = val; }
 void MockEEPROM::update(int addr, uint8_t val) { write(addr, val); }
+void MockEEPROM::commit() {}
 
-SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 0.0f, 3.6f, 1.0f, 10.0f, 3.6f, 0.0, 0.0, 25.0f, 0.2f, true, false, true, false };
-uint8_t current_adc_ref = DEFAULT;
-
+SimSensors sim = { 12.0f, 18.0f, 0.0f, 100.0f, 0.0f, 12.0f, 12.0f, 0.1f, 10.0f, 100.0f, 5.0f, 0.0, 0.0, 25.0f, 0.2f, true, false, true, false, 15600.0f };
+uint8_t current_adc_ref = 1;
 unsigned long current_time_ms = 0;
 
-unsigned long millis() {
-    return current_time_ms;
-}
+unsigned long millis() { return current_time_ms; }
 
 void update_sim() {
-    float duty = (float)OCR1A / 1023.0f;
-    float current_Voc = sim.solarOCV;
-    float f_sw = 15600.0f;
+    float duty = (ICR1 > 0) ? ((float)OCR1A / (float)ICR1) : 0.0f;
+    duty = std::max(0.001f, std::min(0.999f, duty));
 
-    // --- Hardware Parameters ---
-    float L0, R_dcr, I_sat, C_pw;
-    if (sim.low_spec_inductor) {
-        L0 = 22.0e-6f;
-        R_dcr = 0.250f;
-        I_sat = 1.5f;
-        C_pw = 40.0e-12f;
-    } else {
-        L0 = 22.0e-6f;
-        R_dcr = 0.046f;
-        I_sat = 5.3f;
-        C_pw = 15.0e-12f;
+    float Voc = sim.solarOCV;
+    float Isc_A = sim.solarCurrentMA / 1000.0f;
+    float f_sw = sim.freq_hz;
+    bool active_sync = sim.sync_mode && (OCR1B > OCR1A);
+
+    float Rdcr = sim.low_spec_inductor ? 0.5f : 0.046f;
+    float Rfet = 0.050f;
+    float Vbat_ocv = sim.batteryOCV;
+
+    // Numerical Solver: Solve for I_out
+    float low = 0.0f, high = std::max(0.1f, Isc_A / (duty + 0.01f) + 2.0f);
+    for(int i=0; i<40; i++) {
+        float mid = (low + high) / 2.0f;
+        float Ipan = mid * duty;
+        float Vt = 1.5f;
+        float Vsol = Voc - Vt * std::log(std::max(1e-9f, Ipan / (Isc_A + 0.001f) + 1.0f) / 1.0f) * 5.0f;
+        if (Vsol < 0) Vsol = 0;
+
+        float R_ind_eff = Rdcr * (1.0f + 0.15f * sqrt(f_sw / 15600.0f));
+        float P_sw = (0.5f * Vsol * mid * f_sw * 100e-9f) + 0.02f * (f_sw / 15600.0f);
+        float V_loss = mid * (Rfet * duty + (active_sync ? Rfet : 0.01f) * (1.0f - duty) + R_ind_eff)
+                     + (active_sync ? 0.05f : 0.6f * (1.0f - duty))
+                     + (P_sw / (mid + 0.001f));
+
+        if (Vsol * duty - V_loss > Vbat_ocv) low = mid;
+        else high = mid;
     }
 
-    float R_ds_on = 0.040f;
-    float R_sync = 0.040f;
-    float V_diode = 0.55f;
-    float t_tr_tf = 600e-9f;
+    float I_out = low;
+    float I_pan = I_out * duty;
+    sim.solarCurrentMA_actual = std::max(0.0f, I_pan * 1000.0f);
+    float Vt = 1.5f;
+    sim.solarBusV = Voc - Vt * std::log(std::max(1e-9f, I_pan / (Isc_A + 0.001f) + 1.0f) / 1.0f) * 5.0f;
+    if (sim.solarBusV < 0) sim.solarBusV = 0;
 
-    float C_in_esr = 0.050f;
-    float V_bat_ocv = 3.60f;
-    float R_bat_int = 0.60f;
-
-    float I_q = 0.025f;
-    float P_gate = 0.120f;
-
-    float Isc = sim.solarCurrentMA;
-    bool active_sync = sim.sync_mode && (OCR1B > OCR1A) && (OCR1B < 1023);
-
-    if (duty < 0.001f) {
-        sim.solarBusV = current_Voc;
-        sim.solarCurrentMA_actual = 0;
-        sim.batteryV = V_bat_ocv;
-    } else {
-        // Simplified power model for stability
-        float Iout_est = 100.0f;
-        for(int i=0; i<30; i++) {
-            float Iout_A = Iout_est / 1000.0f;
-            float P_loss = (Iout_A * Iout_A) * (R_dcr + R_ds_on) * duty;
-            P_loss += active_sync ? ((Iout_A * Iout_A) * R_sync * (1.0f-duty)) : (Iout_A * V_diode * (1.0f-duty));
-            P_loss += 0.5f * sim.solarBusV * Iout_A * f_sw * t_tr_tf;
-            P_loss += P_gate;
-
-            float terminal_Vbat = V_bat_ocv + Iout_A * R_bat_int;
-            float target_Vsolar = (terminal_Vbat * Iout_A + P_loss) / (Iout_A * duty + 1e-9f);
-            if (target_Vsolar > current_Voc) target_Vsolar = current_Voc;
-            if (target_Vsolar < terminal_Vbat) target_Vsolar = terminal_Vbat + 0.01f;
-
-            float Vt = 2.0f;
-            float Ipanel_new = Isc * (1.0f - exp((target_Vsolar - current_Voc) / Vt));
-            if (Ipanel_new < 0) Ipanel_new = 0;
-
-            sim.solarCurrentMA_actual = Ipanel_new;
-            sim.solarBusV = target_Vsolar;
-            Iout_est = sim.solarCurrentMA_actual / duty;
-        }
-        sim.batteryV = V_bat_ocv + (Iout_est / 1000.0f) * R_bat_int;
-    }
-
-    float solarOutMA = (duty > 0.02f) ? (sim.solarCurrentMA_actual / duty) : 0;
-    sim.harvestedMAH += (double)solarOutMA * (0.1 / 3600.0);
-    sim.vcc = std::min(5.0f, sim.batteryV);
+    sim.batteryV = Vbat_ocv + I_out * 0.05f;
+    sim.vcc = 5.0f;
     sim.solarShuntV = sim.solarCurrentMA_actual * 0.01f;
     current_time_ms += 100;
 }
 
 void delay(unsigned long ms) {
-    while (ms >= 100) {
-        update_sim();
-        ms -= 100;
-    }
+    while (ms >= 100) { update_sim(); ms -= 100; }
     current_time_ms += ms;
 }
 
-void analogReference(uint8_t mode) {
-    current_adc_ref = mode;
-}
-
+void analogReference(uint8_t mode) { current_adc_ref = mode; }
 void pinMode(int pin, int mode) {}
 void digitalWrite(int pin, int val) {}
-
-int digitalRead(int pin) {
-    if (pin == 2) return sim.motion ? HIGH : LOW;
-    return LOW;
-}
-
+int digitalRead(int pin) { return (pin == 2) ? (sim.motion ? 1 : 0) : 0; }
 int analogRead(int pin) {
-    float noise = 0;
-    float ref = (current_adc_ref == INTERNAL) ? 1.1f : sim.vcc;
-    if (pin == A1) {
-        float ratio = (current_adc_ref == INTERNAL) ? 5.54f : 3.0f;
-        float v_pin = sim.batteryV / ratio;
-        return (int)std::max(0.0f, std::min(1023.0f, v_pin * 1023.0f / ref));
-    }
-    if (pin == A0) {
-        float ratio = (current_adc_ref == INTERNAL) ? 31.3f : 4.0f;
-        float v_pin = sim.solarBusV / ratio;
-        return (int)std::max(0.0f, std::min(1023.0f, v_pin * 1023.0f / ref));
-    }
+    float ref = (current_adc_ref == 2) ? 1.1f : 5.0f;
+    if (pin == 0 || pin == 14) return (int)((sim.solarBusV / 4.0f) * 1023.0f / ref);
+    if (pin == 1 || pin == 15) return (int)((sim.batteryV / 3.0f) * 1023.0f / ref);
     if (pin == 14) return (int)(1.1f * 1023.0f / sim.vcc);
     return 0;
 }
-
-void analogWrite(int pin, int val) {
-    if (pin == 3) sim.systemCurrentMA = 10.0f + (val / 255.0f) * 500.0f;
-}
-
+void analogWrite(int pin, int val) {}
 void set_sleep_mode(int mode) {}
 void sleep_enable() {}
 void sleep_mode() {}
 void sleep_disable() {}
 void sleep_bod_disable() {}
-void sleep_cpu() {
-    for(int i=0; i<80; i++) update_sim();
-    if (WDTCSR & (1 << WDIE)) {
-        if (WDT_handler) WDT_handler();
-    }
-}
+void sleep_cpu() { for(int i=0; i<80; i++) update_sim(); }
 void wdt_disable() {}
 
 long map(long x, long in_min, long in_max, long out_min, long out_max) {
