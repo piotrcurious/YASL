@@ -1,90 +1,119 @@
 <svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
 <rect width="100%" height="100%" fill="#fff"/>
-<text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">Efficiency vs Solar Voltage</text>
-<line x1="80" y1="420.0" x2="750" y2="420.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="425.0" text-anchor="end" font-family="Arial" font-size="12">0%</text>
-<line x1="80" y1="384.0" x2="750" y2="384.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="389.0" text-anchor="end" font-family="Arial" font-size="12">10%</text>
-<line x1="80" y1="348.0" x2="750" y2="348.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="353.0" text-anchor="end" font-family="Arial" font-size="12">20%</text>
-<line x1="80" y1="312.0" x2="750" y2="312.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="317.0" text-anchor="end" font-family="Arial" font-size="12">30%</text>
-<line x1="80" y1="276.0" x2="750" y2="276.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="281.0" text-anchor="end" font-family="Arial" font-size="12">40%</text>
-<line x1="80" y1="240.0" x2="750" y2="240.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="245.0" text-anchor="end" font-family="Arial" font-size="12">50%</text>
-<line x1="80" y1="204.0" x2="750" y2="204.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="209.0" text-anchor="end" font-family="Arial" font-size="12">60%</text>
-<line x1="80" y1="168.00000000000003" x2="750" y2="168.00000000000003" stroke="#eee" stroke-width="1"/>
-<text x="70" y="173.00000000000003" text-anchor="end" font-family="Arial" font-size="12">70%</text>
-<line x1="80" y1="132.0" x2="750" y2="132.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="137.0" text-anchor="end" font-family="Arial" font-size="12">80%</text>
-<line x1="80" y1="96.0" x2="750" y2="96.0" stroke="#eee" stroke-width="1"/>
-<text x="70" y="101.0" text-anchor="end" font-family="Arial" font-size="12">90%</text>
+<text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">Efficiency vs Solar Voltage (High Res)</text>
+<line x1="80" y1="400.0" x2="750" y2="400.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="405.0" text-anchor="end" font-family="Arial" font-size="12">0%</text>
+<line x1="80" y1="366.0" x2="750" y2="366.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="371.0" text-anchor="end" font-family="Arial" font-size="12">10%</text>
+<line x1="80" y1="332.0" x2="750" y2="332.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="337.0" text-anchor="end" font-family="Arial" font-size="12">20%</text>
+<line x1="80" y1="298.0" x2="750" y2="298.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="303.0" text-anchor="end" font-family="Arial" font-size="12">30%</text>
+<line x1="80" y1="264.0" x2="750" y2="264.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="269.0" text-anchor="end" font-family="Arial" font-size="12">40%</text>
+<line x1="80" y1="230.0" x2="750" y2="230.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="235.0" text-anchor="end" font-family="Arial" font-size="12">50%</text>
+<line x1="80" y1="196.0" x2="750" y2="196.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="201.0" text-anchor="end" font-family="Arial" font-size="12">60%</text>
+<line x1="80" y1="162.00000000000003" x2="750" y2="162.00000000000003" stroke="#eee" stroke-width="1"/>
+<text x="70" y="167.00000000000003" text-anchor="end" font-family="Arial" font-size="12">70%</text>
+<line x1="80" y1="128.0" x2="750" y2="128.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="133.0" text-anchor="end" font-family="Arial" font-size="12">80%</text>
+<line x1="80" y1="94.0" x2="750" y2="94.0" stroke="#eee" stroke-width="1"/>
+<text x="70" y="99.0" text-anchor="end" font-family="Arial" font-size="12">90%</text>
 <line x1="80" y1="60.0" x2="750" y2="60.0" stroke="#eee" stroke-width="1"/>
 <text x="70" y="65.0" text-anchor="end" font-family="Arial" font-size="12">100%</text>
-<line x1="80.0" y1="420" x2="80.0" y2="425" stroke="#333" stroke-width="2"/>
-<text x="80.0" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">14.0</text>
-<line x1="175.70471524276144" y1="420" x2="175.70471524276144" y2="425" stroke="#333" stroke-width="2"/>
-<text x="175.70471524276144" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">15.4</text>
-<line x1="271.4094304855229" y1="420" x2="271.4094304855229" y2="425" stroke="#333" stroke-width="2"/>
-<text x="271.4094304855229" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">16.9</text>
-<line x1="367.11414572828426" y1="420" x2="367.11414572828426" y2="425" stroke="#333" stroke-width="2"/>
-<text x="367.11414572828426" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">18.3</text>
-<line x1="462.8188609710458" y1="420" x2="462.8188609710458" y2="425" stroke="#333" stroke-width="2"/>
-<text x="462.8188609710458" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">19.7</text>
-<line x1="558.5235762138072" y1="420" x2="558.5235762138072" y2="425" stroke="#333" stroke-width="2"/>
-<text x="558.5235762138072" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">21.1</text>
-<line x1="654.2282914565685" y1="420" x2="654.2282914565685" y2="425" stroke="#333" stroke-width="2"/>
-<text x="654.2282914565685" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">22.6</text>
-<line x1="749.9330066993301" y1="420" x2="749.9330066993301" y2="425" stroke="#333" stroke-width="2"/>
-<text x="749.9330066993301" y="445" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">24.0</text>
-<line x1="80" y1="420" x2="750" y2="420" stroke="#333" stroke-width="2"/>
-<line x1="80" y1="60" x2="80" y2="420" stroke="#333" stroke-width="2"/>
-<text x="400" y="485" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Solar OCV (V)</text>
-<text x="20" y="250" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold" transform="rotate(-90, 20, 250)">Efficiency (%)</text>
-<polyline points="80.0,83.70325318441627 146.993300669933,91.31006677585987 213.986601339866,84.01856359729493 280.97990200979905,84.04457209400874 347.973202679732,92.4153146964012 481.9598040195981,83.78105277728514 615.946405359464,83.45811525347511 749.9330066993301,93.41030764092989" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
-<circle cx="80.0" cy="83.70325318441627" r="4" fill="red"/>
-<circle cx="146.993300669933" cy="91.31006677585987" r="4" fill="red"/>
-<circle cx="213.986601339866" cy="84.01856359729493" r="4" fill="red"/>
-<circle cx="280.97990200979905" cy="84.04457209400874" r="4" fill="red"/>
-<circle cx="347.973202679732" cy="92.4153146964012" r="4" fill="red"/>
-<circle cx="481.9598040195981" cy="83.78105277728514" r="4" fill="red"/>
-<circle cx="615.946405359464" cy="83.45811525347511" r="4" fill="red"/>
-<circle cx="749.9330066993301" cy="93.41030764092989" r="4" fill="red"/>
-<polyline points="80.0,118.98698820503603 146.993300669933,118.83554879406927 213.986601339866,124.35354506920896 280.97990200979905,124.48778422081813 347.973202679732,124.27692399155791 481.9598040195981,116.32379326060499 615.946405359464,122.7248049167257 749.9330066993301,114.41533232394312" fill="none" stroke="orange" stroke-width="3" stroke-linejoin="round"/>
-<circle cx="80.0" cy="118.98698820503603" r="4" fill="orange"/>
-<circle cx="146.993300669933" cy="118.83554879406927" r="4" fill="orange"/>
-<circle cx="213.986601339866" cy="124.35354506920896" r="4" fill="orange"/>
-<circle cx="280.97990200979905" cy="124.48778422081813" r="4" fill="orange"/>
-<circle cx="347.973202679732" cy="124.27692399155791" r="4" fill="orange"/>
-<circle cx="481.9598040195981" cy="116.32379326060499" r="4" fill="orange"/>
-<circle cx="615.946405359464" cy="122.7248049167257" r="4" fill="orange"/>
-<circle cx="749.9330066993301" cy="114.41533232394312" r="4" fill="orange"/>
-<polyline points="80.0,87.07002011238046 146.993300669933,79.8995392750196 213.986601339866,87.77370651853363 280.97990200979905,88.11541076023474 347.973202679732,80.01451952446075 481.9598040195981,89.04844233278777 615.946405359464,89.61526517373454 749.9330066993301,90.15125564887222" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
-<circle cx="80.0" cy="87.07002011238046" r="4" fill="blue"/>
-<circle cx="146.993300669933" cy="79.8995392750196" r="4" fill="blue"/>
-<circle cx="213.986601339866" cy="87.77370651853363" r="4" fill="blue"/>
-<circle cx="280.97990200979905" cy="88.11541076023474" r="4" fill="blue"/>
-<circle cx="347.973202679732" cy="80.01451952446075" r="4" fill="blue"/>
-<circle cx="481.9598040195981" cy="89.04844233278777" r="4" fill="blue"/>
-<circle cx="615.946405359464" cy="89.61526517373454" r="4" fill="blue"/>
-<circle cx="749.9330066993301" cy="90.15125564887222" r="4" fill="blue"/>
-<polyline points="80.0,121.70940367870861 146.993300669933,115.59065336953716 213.986601339866,115.40176100143702 280.97990200979905,114.20304604654473 347.973202679732,113.5544314584252 481.9598040195981,119.9671705614931 615.946405359464,119.96742392208313 749.9330066993301,119.15122122601377" fill="none" stroke="cyan" stroke-width="3" stroke-linejoin="round"/>
-<circle cx="80.0" cy="121.70940367870861" r="4" fill="cyan"/>
-<circle cx="146.993300669933" cy="115.59065336953716" r="4" fill="cyan"/>
-<circle cx="213.986601339866" cy="115.40176100143702" r="4" fill="cyan"/>
-<circle cx="280.97990200979905" cy="114.20304604654473" r="4" fill="cyan"/>
-<circle cx="347.973202679732" cy="113.5544314584252" r="4" fill="cyan"/>
-<circle cx="481.9598040195981" cy="119.9671705614931" r="4" fill="cyan"/>
-<circle cx="615.946405359464" cy="119.96742392208313" r="4" fill="cyan"/>
-<circle cx="749.9330066993301" cy="119.15122122601377" r="4" fill="cyan"/>
-<line x1="600" y1="80" x2="630" y2="80" stroke="red" stroke-width="3"/>
-<text x="640" y="85" font-family="Arial" font-size="12">Diode (High-Spec L)</text>
-<line x1="600" y1="105" x2="630" y2="105" stroke="orange" stroke-width="3"/>
-<text x="640" y="110" font-family="Arial" font-size="12">Diode (Low-Spec L)</text>
-<line x1="600" y1="130" x2="630" y2="130" stroke="blue" stroke-width="3"/>
-<text x="640" y="135" font-family="Arial" font-size="12">Sync (High-Spec L)</text>
-<line x1="600" y1="155" x2="630" y2="155" stroke="cyan" stroke-width="3"/>
-<text x="640" y="160" font-family="Arial" font-size="12">Sync (Low-Spec L)</text>
+<line x1="80.0" y1="400" x2="80.0" y2="405" stroke="#333" stroke-width="2"/>
+<text x="80.0" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">0.0</text>
+<line x1="154.441466785773" y1="400" x2="154.441466785773" y2="405" stroke="#333" stroke-width="2"/>
+<text x="154.441466785773" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">2.8</text>
+<line x1="228.882933571546" y1="400" x2="228.882933571546" y2="405" stroke="#333" stroke-width="2"/>
+<text x="228.882933571546" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">5.6</text>
+<line x1="303.32440035731906" y1="400" x2="303.32440035731906" y2="405" stroke="#333" stroke-width="2"/>
+<text x="303.32440035731906" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">8.3</text>
+<line x1="377.765867143092" y1="400" x2="377.765867143092" y2="405" stroke="#333" stroke-width="2"/>
+<text x="377.765867143092" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">11.1</text>
+<line x1="452.20733392886507" y1="400" x2="452.20733392886507" y2="405" stroke="#333" stroke-width="2"/>
+<text x="452.20733392886507" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">13.9</text>
+<line x1="526.6488007146381" y1="400" x2="526.6488007146381" y2="405" stroke="#333" stroke-width="2"/>
+<text x="526.6488007146381" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">16.7</text>
+<line x1="601.0902675004111" y1="400" x2="601.0902675004111" y2="405" stroke="#333" stroke-width="2"/>
+<text x="601.0902675004111" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">19.4</text>
+<line x1="675.531734286184" y1="400" x2="675.531734286184" y2="405" stroke="#333" stroke-width="2"/>
+<text x="675.531734286184" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">22.2</text>
+<line x1="749.9732010719571" y1="400" x2="749.9732010719571" y2="405" stroke="#333" stroke-width="2"/>
+<text x="749.9732010719571" y="425" text-anchor="middle" font-family="Arial" font-size="12" fill="#333">25.0</text>
+<line x1="80" y1="400" x2="750" y2="400" stroke="#333" stroke-width="2"/>
+<line x1="80" y1="60" x2="80" y2="400" stroke="#333" stroke-width="2"/>
+<text x="400" y="480" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Solar OCV (V)</text>
+<polyline points="533.8532458701652,69.03093111118966 555.4639014439422,70.01454178537512 577.0772369105237,71.20293294293197 598.6878924843006,72.57489654057736 620.301227950882,91.95005095225275 641.9118835246591,109.16000000000003 663.5252189912403,124.55004532406707 685.1358745650174,138.39084541777646 706.7492100315987,150.90937657436112 728.3598656053757,162.28260834134656 749.9732010719571,172.66438067925003" fill="none" stroke="red" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="533.8532458701652" cy="69.03093111118966" r="3" fill="red"/>
+<circle cx="555.4639014439422" cy="70.01454178537512" r="3" fill="red"/>
+<circle cx="577.0772369105237" cy="71.20293294293197" r="3" fill="red"/>
+<circle cx="598.6878924843006" cy="72.57489654057736" r="3" fill="red"/>
+<circle cx="620.301227950882" cy="91.95005095225275" r="3" fill="red"/>
+<circle cx="641.9118835246591" cy="109.16000000000003" r="3" fill="red"/>
+<circle cx="663.5252189912403" cy="124.55004532406707" r="3" fill="red"/>
+<circle cx="685.1358745650174" cy="138.39084541777646" r="3" fill="red"/>
+<circle cx="706.7492100315987" cy="150.90937657436112" r="3" fill="red"/>
+<circle cx="728.3598656053757" cy="162.28260834134656" r="3" fill="red"/>
+<circle cx="749.9732010719571" cy="172.66438067925003" r="3" fill="red"/>
+<polyline points="447.4052637894484,74.13432691936913 469.01591936322546,80.2892283742795 490.6292548298068,86.54493583134843 512.239910403584,92.83633726176566 533.8532458701652,99.12212133640065 555.4639014439422,105.37973372418605 577.0772369105237,111.58810015738169 598.6878924843006,117.72961263127172 620.301227950882,123.78990874683637 641.9118835246591,129.75514322831555 663.5252189912403,135.615186154647 685.1358745650174,141.3610634490139 706.7492100315987,150.90937657436112 728.3598656053757,162.28260834134656 749.9732010719571,172.66438067925003" fill="none" stroke="orange" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="447.4052637894484" cy="74.13432691936913" r="3" fill="orange"/>
+<circle cx="469.01591936322546" cy="80.2892283742795" r="3" fill="orange"/>
+<circle cx="490.6292548298068" cy="86.54493583134843" r="3" fill="orange"/>
+<circle cx="512.239910403584" cy="92.83633726176566" r="3" fill="orange"/>
+<circle cx="533.8532458701652" cy="99.12212133640065" r="3" fill="orange"/>
+<circle cx="555.4639014439422" cy="105.37973372418605" r="3" fill="orange"/>
+<circle cx="577.0772369105237" cy="111.58810015738169" r="3" fill="orange"/>
+<circle cx="598.6878924843006" cy="117.72961263127172" r="3" fill="orange"/>
+<circle cx="620.301227950882" cy="123.78990874683637" r="3" fill="orange"/>
+<circle cx="641.9118835246591" cy="129.75514322831555" r="3" fill="orange"/>
+<circle cx="663.5252189912403" cy="135.615186154647" r="3" fill="orange"/>
+<circle cx="685.1358745650174" cy="141.3610634490139" r="3" fill="orange"/>
+<circle cx="706.7492100315987" cy="150.90937657436112" r="3" fill="orange"/>
+<circle cx="728.3598656053757" cy="162.28260834134656" r="3" fill="orange"/>
+<circle cx="749.9732010719571" cy="172.66438067925003" r="3" fill="orange"/>
+<polyline points="425.791928322867,62.45457375981937 447.4052637894484,62.80746443802053 469.01591936322546,63.572690381744906 490.6292548298068,64.49652409644449 512.239910403584,65.5336735124194 533.8532458701652,66.67179325213192 555.4639014439422,67.90547712472471 577.0772369105237,69.23337387599753 598.6878924843006,72.57489654057736 620.301227950882,91.95005095225275 641.9118835246591,109.16000000000003 663.5252189912403,124.55004532406707 685.1358745650174,138.39084541777646 706.7492100315987,150.90937657436112 728.3598656053757,162.28260834134656 749.9732010719571,172.66438067925003" fill="none" stroke="blue" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="425.791928322867" cy="62.45457375981937" r="3" fill="blue"/>
+<circle cx="447.4052637894484" cy="62.80746443802053" r="3" fill="blue"/>
+<circle cx="469.01591936322546" cy="63.572690381744906" r="3" fill="blue"/>
+<circle cx="490.6292548298068" cy="64.49652409644449" r="3" fill="blue"/>
+<circle cx="512.239910403584" cy="65.5336735124194" r="3" fill="blue"/>
+<circle cx="533.8532458701652" cy="66.67179325213192" r="3" fill="blue"/>
+<circle cx="555.4639014439422" cy="67.90547712472471" r="3" fill="blue"/>
+<circle cx="577.0772369105237" cy="69.23337387599753" r="3" fill="blue"/>
+<circle cx="598.6878924843006" cy="72.57489654057736" r="3" fill="blue"/>
+<circle cx="620.301227950882" cy="91.95005095225275" r="3" fill="blue"/>
+<circle cx="641.9118835246591" cy="109.16000000000003" r="3" fill="blue"/>
+<circle cx="663.5252189912403" cy="124.55004532406707" r="3" fill="blue"/>
+<circle cx="685.1358745650174" cy="138.39084541777646" r="3" fill="blue"/>
+<circle cx="706.7492100315987" cy="150.90937657436112" r="3" fill="blue"/>
+<circle cx="728.3598656053757" cy="162.28260834134656" r="3" fill="blue"/>
+<circle cx="749.9732010719571" cy="172.66438067925003" r="3" fill="blue"/>
+<polyline points="425.791928322867,68.37059322376132 447.4052637894484,74.13432691936913 469.01591936322546,80.2892283742795 490.6292548298068,86.54493583134843 512.239910403584,92.83633726176566 533.8532458701652,99.12212133640065 555.4639014439422,105.37973372418605 577.0772369105237,111.58810015738169 598.6878924843006,117.72961263127172 620.301227950882,123.78990874683637 641.9118835246591,129.75514322831555 663.5252189912403,135.615186154647 685.1358745650174,141.3610634490139 706.7492100315987,150.90937657436112 728.3598656053757,162.28260834134656 749.9732010719571,172.66438067925003" fill="none" stroke="cyan" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="425.791928322867" cy="68.37059322376132" r="3" fill="cyan"/>
+<circle cx="447.4052637894484" cy="74.13432691936913" r="3" fill="cyan"/>
+<circle cx="469.01591936322546" cy="80.2892283742795" r="3" fill="cyan"/>
+<circle cx="490.6292548298068" cy="86.54493583134843" r="3" fill="cyan"/>
+<circle cx="512.239910403584" cy="92.83633726176566" r="3" fill="cyan"/>
+<circle cx="533.8532458701652" cy="99.12212133640065" r="3" fill="cyan"/>
+<circle cx="555.4639014439422" cy="105.37973372418605" r="3" fill="cyan"/>
+<circle cx="577.0772369105237" cy="111.58810015738169" r="3" fill="cyan"/>
+<circle cx="598.6878924843006" cy="117.72961263127172" r="3" fill="cyan"/>
+<circle cx="620.301227950882" cy="123.78990874683637" r="3" fill="cyan"/>
+<circle cx="641.9118835246591" cy="129.75514322831555" r="3" fill="cyan"/>
+<circle cx="663.5252189912403" cy="135.615186154647" r="3" fill="cyan"/>
+<circle cx="685.1358745650174" cy="141.3610634490139" r="3" fill="cyan"/>
+<circle cx="706.7492100315987" cy="150.90937657436112" r="3" fill="cyan"/>
+<circle cx="728.3598656053757" cy="162.28260834134656" r="3" fill="cyan"/>
+<circle cx="749.9732010719571" cy="172.66438067925003" r="3" fill="cyan"/>
+<line x1="580" y1="80" x2="610" y2="80" stroke="red" stroke-width="3"/>
+<text x="620" y="85" font-family="Arial" font-size="12">Diode (High-Spec L)</text>
+<line x1="580" y1="105" x2="610" y2="105" stroke="orange" stroke-width="3"/>
+<text x="620" y="110" font-family="Arial" font-size="12">Diode (Low-Spec L)</text>
+<line x1="580" y1="130" x2="610" y2="130" stroke="blue" stroke-width="3"/>
+<text x="620" y="135" font-family="Arial" font-size="12">Sync (High-Spec L)</text>
+<line x1="580" y1="155" x2="610" y2="155" stroke="cyan" stroke-width="3"/>
+<text x="620" y="160" font-family="Arial" font-size="12">Sync (Low-Spec L)</text>
 </svg>

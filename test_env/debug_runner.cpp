@@ -1,4 +1,26 @@
 
+#include <iostream>
+#include "Arduino.h"
+#include "EEPROM.h"
+#include "Wire.h"
+#include "Adafruit_INA219.h"
+void checkAndInitiateSleep();
+void processCommand(const char* line);
+void validateConfig();
+void loadConfig();
+void saveConfig();
+void readSensors();
+float getSmoothedADC(uint8_t pin);
+void performCalibration();
+void updateMPPT();
+void runSMCMPPT();
+void updateLight();
+void sleepSystem();
+void configureWDT();
+void disableWDT();
+void restoreHardware();
+float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
+
 /*
  * YASL (Yet Another Solar Lamp) - Consolidated Version
  *
@@ -27,27 +49,14 @@ const uint8_t PIN_SOLAR_ADC = A0;   // Raw solar ADC (backup/redundant)
 const uint8_t PIN_BAT_ADC   = A1;   // Main Battery Voltage Divider
 const uint8_t PIN_LED_PWM   = 3;    // LED Mosfet (Timer2)
 const uint8_t PIN_PIR       = 2;    // Motion Sensor (D2 is INT0)
-const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT (Main FET, Timer1 OC1A)
-const uint8_t PIN_MPPT_SYNC = 10;   // Solar MPPT (Sync FET, Timer1 OC1B)
+const uint8_t PIN_MPPT_PWM  = 9;    // Solar MPPT Mosfet (Timer1)
 
 // --- Tuning & Defaults ---
 
-// System Reference & Precision Mode
-// Set to true if you have adjusted your voltage dividers for the 1.1V internal reference.
-// INTERNAL mode provides higher precision and Vcc independence.
-// Divider Ratios for 1.1V Internal Ref (Recommended):
-// Bat (4.2V max): 100k / 22k -> Ratio = 5.54 (Vpin = 0.75V)
-// Solar (24V max): 100k / 3.3k -> Ratio = 31.3 (Vpin = 0.76V)
-#define USE_INTERNAL_1V1_REF    false
-
-#define BAT_DIVIDER_RATIO_DEF   3.0f
-#define SOLAR_DIVIDER_RATIO_DEF 4.0f
-#define BAT_DIVIDER_RATIO_INT   5.54f
-#define SOLAR_DIVIDER_RATIO_INT 31.3f
-
+// System Reference
 #define REF_VOLTAGE             5.0f
-#define BAT_DIVIDER_RATIO       (USE_INTERNAL_1V1_REF ? BAT_DIVIDER_RATIO_INT : BAT_DIVIDER_RATIO_DEF)
-#define SOLAR_DIVIDER_RATIO     (USE_INTERNAL_1V1_REF ? SOLAR_DIVIDER_RATIO_INT : SOLAR_DIVIDER_RATIO_DEF)
+#define BAT_DIVIDER_RATIO       3.0f
+#define SOLAR_DIVIDER_RATIO     4.0f
 #define ADC_SMOOTHING_SAMPLES   8
 
 // Battery Defaults (Li-Ion/Li-Po typical)
@@ -63,7 +72,6 @@ const uint8_t PIN_MPPT_SYNC = 10;   // Solar MPPT (Sync FET, Timer1 OC1B)
 #define MPPT_INTERVAL_MS        100
 #define MPPT_PWM_MAX_RES        1023   // 10-bit range (Full ICR1)
 #define MPPT_PWM_MIN_RES        0
-#define SYNC_FET_DEADTIME       12     // Deadtime in ticks (~0.75us)
 
 // Sliding Mode Control (SMC) Tuning
 #define SMC_BASE_GAIN           2.0f
@@ -137,7 +145,6 @@ const uint32_t MAGIC_TOKEN = 0x5941534C; // "YASL"
 
 // Global State
 SystemState sys = {0,0,0,0,0,0,0,true,false,0,0,'N', 0};
-float current_adc_scale = REF_VOLTAGE;
 Config config;
 float current_led_val = 0;
 bool ina219_present = false;
@@ -153,7 +160,7 @@ char current_charge_stage = 'B';
 
 // Non-linear Inference Parameters
 float model_R_conv = DEF_MODEL_R_CONV;
-float model_V_diode = DEF_MODEL_V_DIODE; // Set to ~0.01 in sync mode
+float model_V_diode = DEF_MODEL_V_DIODE;
 
 // Timers
 unsigned long lastLog = 0;
@@ -183,7 +190,6 @@ void configureWDT();
 void disableWDT();
 void restoreHardware();
 float getSmoothedADC(uint8_t pin);
-float readVcc();
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max);
 
 // --- INA219 ---
@@ -210,14 +216,10 @@ void setup() {
     // Immediate hardware config
     restoreHardware();
 
-#if USE_INTERNAL_1V1_REF
-    analogReference(INTERNAL);
-#endif
-
     Wire.begin();
     Serial.begin(115200);
     while (!Serial && millis() < 2000);
-    Serial.println(F("YASL CONSOLIDATED v2.4 INIT"));
+    Serial.println(F("YASL CONSOLIDATED v2.3.1 INIT"));
 
     // 0. Load Configuration (Now that Serial is ready)
     loadConfig();
@@ -516,19 +518,9 @@ void saveConfig() {
 
 void readSensors() {
     unsigned long now = millis();
-    // 0. Update ADC Scale
-#if USE_INTERNAL_1V1_REF
-    current_adc_scale = 1.1f;
-#else
-    // Measure Vcc relative to 1.1V bandgap every cycle to ensure precision
-    // if powered directly from battery.
-    current_adc_scale = readVcc();
-#endif
-
     // 1. Connectivity Check & Recovery (INA219)
     if (ina219_present) {
         Wire.beginTransmission(0x40);
-        delay(1);
         byte error = Wire.endTransmission();
         if (error != 0) {
             ina219_present = false;
@@ -555,11 +547,11 @@ void readSensors() {
         sys.solarV = bus + (shunt / 1000.0f);
     } else {
         float rawSolar = getSmoothedADC(PIN_SOLAR_ADC);
-        sys.solarV = rawSolar * (current_adc_scale / 1023.0f) * SOLAR_DIVIDER_RATIO;
+        sys.solarV = rawSolar * (REF_VOLTAGE / 1023.0f) * SOLAR_DIVIDER_RATIO;
     }
 
     float rawBat = getSmoothedADC(PIN_BAT_ADC);
-    sys.batV = rawBat * (current_adc_scale / 1023.0f) * BAT_DIVIDER_RATIO;
+    sys.batV = rawBat * (REF_VOLTAGE / 1023.0f) * BAT_DIVIDER_RATIO;
 
     // 2. Current Inference (Non-linear Model)
     // Non-ideal Buck: Vbat = (Vsolar * Duty) - (Iout * R_conv) - Vdiode * (1 - Duty)
@@ -569,9 +561,6 @@ void readSensors() {
 
     float duty = (float)OCR1A / 1023.0f;
 
-    // In Synchronous mode, diode drop is replaced by FET resistance
-    float effective_V_diode = (duty > 0.01f) ? 0.02f : model_V_diode;
-
     if (ina219_present) {
         sys.solarI = ina219.getCurrent_mA();
         if (sys.solarI < 0) sys.solarI = 0; // Harvest only
@@ -580,7 +569,7 @@ void readSensors() {
         // Inference logic (Physically derived)
         // High-duty fallback to prevent divide-by-zero or instability
         float d_clamped = (duty > 0.01f) ? duty : 0.01f;
-        float V_comp = sys.batV + effective_V_diode * (1.0f - d_clamped);
+        float V_comp = sys.batV + model_V_diode * (1.0f - d_clamped);
         float numerator = (sys.solarV * d_clamped) - V_comp;
         if (numerator < 0) numerator = 0;
 
@@ -609,25 +598,6 @@ float getSmoothedADC(uint8_t pin) {
     return (float)sum / ADC_SMOOTHING_SAMPLES;
 }
 
-float readVcc() {
-#ifdef SIMULATION
-    // In mock env, channel 14 is the 1.1V bandgap
-    int result = analogRead(14);
-    return 1.1f * 1023.0f / (float)result;
-#else
-    // ATmega328P specific measurement of Vcc relative to 1.1V internal bandgap
-    ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-    delay(2); // Wait for Vref to settle
-    ADCSRA |= _BV(ADSC); // Start conversion
-    while (bit_is_set(ADCSRA, ADSC)); // Wait
-    uint8_t low  = ADCL;
-    uint8_t high = ADCH;
-    long result = (high << 8) | low;
-    // Vcc = 1.1V * 1023 / ADC
-    return 1125.3f / (float)result; // output is in Volts
-#endif
-}
-
 void performCalibration() {
     lastCalib = millis();
     if (ina219_present) return;
@@ -637,7 +607,6 @@ void performCalibration() {
     // 1. Measure Voc (Averaged)
     int oldPWM = sys.mpptPWM;
     OCR1A = 0;
-    OCR1B = MPPT_PWM_MAX_RES; // Sync FET OFF
     delay(250);
     float sumVoc = 0, voc_sq_sum = 0;
     for(int i=0; i<5; i++) {
@@ -688,8 +657,6 @@ void performCalibration() {
     }
 
     OCR1A = oldPWM;
-    if (oldPWM > 50) OCR1B = constrain(oldPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
-    else OCR1B = MPPT_PWM_MAX_RES;
     prevSolarV = -1.0f;
 }
 
@@ -800,14 +767,6 @@ void updateMPPT() {
     // MPPT PWM is now 10-bit (0-1023)
     sys.mpptPWM = constrain(sys.mpptPWM, MPPT_PWM_MIN_RES, MPPT_PWM_MAX_RES);
     OCR1A = sys.mpptPWM;
-
-    // Synchronous FET: Complementary with deadtime
-    // Setting OCR1B > OCR1A in Phase Correct mode (OC1B inverted) ensures deadtime.
-    if (sys.mpptPWM > 50) {
-        OCR1B = constrain(sys.mpptPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
-    } else {
-        OCR1B = MPPT_PWM_MAX_RES; // Inverting mode: MAX = Always OFF
-    }
 }
 
 void runSMCMPPT() {
@@ -925,7 +884,6 @@ void sleepSystem() {
     analogWrite(PIN_LED_PWM, 0);
     current_led_val = 0; // Reset software fade state
     OCR1A = 0; // MPPT 10-bit PWM off
-    OCR1B = 0;
 
     // Peripheral Shutdown
     power_all_disable();
@@ -998,25 +956,16 @@ void disableWDT() {
 void restoreHardware() {
     pinMode(PIN_MPPT_PWM, OUTPUT);
     digitalWrite(PIN_MPPT_PWM, LOW);
-    pinMode(PIN_MPPT_SYNC, OUTPUT);
-    digitalWrite(PIN_MPPT_SYNC, LOW);
     pinMode(PIN_LED_PWM, OUTPUT);
     digitalWrite(PIN_LED_PWM, LOW);
     pinMode(PIN_PIR, INPUT_PULLUP);
 
     // --- High Frequency 10-bit PWM for MPPT (Timer1) ---
-    // Mode 10: Phase Correct PWM, Top=ICR1
-    // OC1A (Pin 9): Non-Inverting
-    // OC1B (Pin 10): Inverting
-    TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(COM1B0) | _BV(WGM11);
-    TCCR1B = _BV(WGM13) | _BV(CS10);
-    ICR1 = 1023;
+    // Pin 9 (OC1A)
+    TCCR1A = _BV(COM1A1) | _BV(WGM11); // Fast PWM, non-inverting, mode 14
+    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS10); // mode 14, no prescaler
+    ICR1 = 1023; // 10-bit resolution -> 16MHz / 1024 = 15.6 kHz
     OCR1A = sys.mpptPWM;
-    if (sys.mpptPWM > 50) {
-        OCR1B = constrain(sys.mpptPWM + SYNC_FET_DEADTIME, 0, MPPT_PWM_MAX_RES);
-    } else {
-        OCR1B = MPPT_PWM_MAX_RES;
-    }
 
     // --- Fully restore Timer2 (Pins 3, 11) ---
     // Mode 3 (Fast PWM), Prescaler 64
@@ -1027,4 +976,30 @@ void restoreHardware() {
 float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
   if (in_max == in_min) return out_min;
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+int main() {
+    sim.ina219_ok = true;
+    sim.batteryCapAH = 10.0;
+    sim.R_conv_base = 0.2;
+    sim.tempC = 25.0;
+    sim.sync_mode = ("Diode" == "Sync");
+    sim.low_spec_inductor = false;
+    setup();
+    config.batMaxV = 14.4; config.batMinV = 10.0; config.batFloatV = 13.5;
+    sys.batV = 12.0; sim.batteryOCV = 12.0;
+    sys.isDark = false; current_charge_stage = 'B';
+    ina219_present = true;
+    float ocv_sweep[] = {14.0, 15.0, 16.0, 17.0, 18.0, 20.0, 22.0, 24.0};
+    for (float ocv : ocv_sweep) {
+        sim.solarOCV = ocv; sim.solarCurrentMA = 5000.0;
+        sys.mpptPWM = 500;
+        for(int i=0; i<3000; i++) { update_sim(); loop(); }
+        float pin = (sim.solarBusV * sim.solarCurrentMA_actual) / 1000.0;
+        float duty = (ICR1 > 0) ? ((float)OCR1A / (float)ICR1) : 0;
+        float solarOutMA = (duty > 0.001f) ? (sim.solarCurrentMA_actual / duty) : 0;
+        float pout = (sim.batteryV * solarOutMA) / 1000.0;
+        std::cout << "DATA," << "Diode_" << (sim.low_spec_inductor ? "Low" : "High") << ",V_SWEEP," << ocv << "," << pin << "," << pout << std::endl;
+    }
+    return 0;
 }

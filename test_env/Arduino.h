@@ -1,4 +1,3 @@
-
 #ifndef ARDUINO_MOCK_H
 #define ARDUINO_MOCK_H
 
@@ -36,6 +35,9 @@ typedef bool boolean;
 #define A3 3
 #define A4 4
 #define A5 5
+
+// ISR Mock
+#define ISR(vector) void vector_func_##vector()
 
 // AVR Registers / Bits for compatibility
 extern int TCCR2A;
@@ -152,6 +154,11 @@ public:
         ss << i;
         *this = ss.str();
     }
+    String(unsigned int i) {
+        std::stringstream ss;
+        ss << i;
+        *this = ss.str();
+    }
     String(float f) {
         std::stringstream ss;
         ss << f;
@@ -163,6 +170,11 @@ public:
         *this = ss.str();
     }
     String(long l) {
+        std::stringstream ss;
+        ss << l;
+        *this = ss.str();
+    }
+    String(unsigned long l) {
         std::stringstream ss;
         ss << l;
         *this = ss.str();
@@ -240,7 +252,7 @@ public:
     long parseInt() {
         std::string s;
         while(available() && (isspace(peek()) || (!isdigit(peek()) && peek() != '-'))) read();
-        while(available() && (isdigit(peek()) || peek() == '-')) s += (char)read();
+        while(available() && (isdigit(peek()) || peek() == '-' || peek() == '.')) s += (char)read();
         try { return std::stol(s); } catch(...) { return 0; }
     }
     operator bool() { return true; }
@@ -286,6 +298,8 @@ struct SimSensors {
     float solarCurrentMA;
     float solarCurrentMA_actual;
     float batteryV;
+    float batteryOCV;
+    float batteryRint;
     float batteryCapAH;
     float systemCurrentMA;
     float vcc;
@@ -297,9 +311,11 @@ struct SimSensors {
     bool  motion;
     bool  ina219_ok;
     bool  low_spec_inductor;
+    float freq_hz;
 };
 extern SimSensors sim;
 extern unsigned long current_time_ms;
 void update_sim();
+
 
 #endif // ARDUINO_MOCK_H
