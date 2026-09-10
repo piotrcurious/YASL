@@ -12,7 +12,7 @@ Analysis of Synchronous vs Asynchronous (Diode) rectification. Solar sweep from 
 
 | Configuration | Inductor Spec | Peak Efficiency | 40W Efficiency |
 | :--- | :--- | :---: | :---: |
-| Diode | High | 97.5% | 97.0% |
-| Diode | Low | 95.8% | 88.2% |
-| Sync | High | 99.3% | 98.3% |
-| Sync | Low | 96.7% | 88.2% |
+| Diode | High | 99.3% | 98.4% |
+| Diode | Low | 96.8% | 87.6% |
+| Sync | High | 99.0% | 98.1% |
+| Sync | Low | 96.5% | 87.4% |
