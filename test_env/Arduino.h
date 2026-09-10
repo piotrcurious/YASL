@@ -80,6 +80,13 @@ extern int WDIE;
 extern int WDP3;
 extern int WDP0;
 
+extern int PCICR;
+extern int PCIE2;
+extern int PCMSK2;
+extern int PCINT18;
+extern int PCIFR;
+extern int PCIF2;
+
 #define B11111000 0xF8
 #define B00000001 0x01
 #define B00000011 0x03
@@ -228,7 +235,9 @@ public:
     void println(float f) { std::cout << f << std::endl; }
     void println(float f, int p) { std::cout << f << std::endl; }
     void println(int i) { std::cout << i << std::endl; }
+    void println(unsigned int i) { std::cout << i << std::endl; }
     void println(long l) { std::cout << l << std::endl; }
+    void println(unsigned long l) { std::cout << l << std::endl; }
     void println(double d) { std::cout << d << std::endl; }
     void println(bool b) { std::cout << (b ? "1" : "0") << std::endl; }
     void flush() {}

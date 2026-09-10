@@ -1,3 +1,9 @@
+
+#include "Arduino.h"
+#include "EEPROM.h"
+#include "Wire.h"
+
+// Content of .ino file
 /*
  * YASL (Yet Another Solar Lamp) - Consolidated Version
  * Refactored for Safety, Non-Blocking execution, Safe Deadtime, and PCINT PIR Motion Sensing.
@@ -163,6 +169,13 @@ float getSmoothedADC(uint8_t pin);
 float readVcc();
 
 // --- ISRs ---
+ISR(INT0_vect) {
+    wakePIR = true;
+    if ((EICRA & 0b00000011) == 0) {
+        EIMSK &= ~(1 << INT0); // Prevent wake-loops in LOW mode
+    }
+}
+
 // Pin Change Interrupt for Port D (Pin 2 / PCINT18)
 // Handles HIGH signal from typical PIR motion sensors
 ISR(PCINT2_vect) {
@@ -356,7 +369,7 @@ void processCommand(const char* line) {
         Serial.print(F("BatMax: ")); Serial.println(config.batMaxV);
         Serial.print(F("BatMin: ")); Serial.println(config.batMinV);
         Serial.print(F("LEDMax: ")); Serial.println(config.ledMaxPWM);
-        Serial.print(F("Timeout: ")); Serial.println((unsigned long)config.motionTimeout);
+        Serial.print(F("Timeout: ")); Serial.println(config.motionTimeout);
     }
     else if (cmd == 'm') { // Manual Light Toggle
         manual_override = !manual_override;
@@ -800,13 +813,15 @@ void sleepSystem() {
     power_all_disable();
     configureSleepWDT(); // 8s interrupt sleep watchdog
 
-    // Disable INT0 to prevent wake-loops on active-HIGH PIR sensors (which are normally LOW)
-    EIMSK &= ~(1 << INT0);
-
     // Configure PCINT2 on Pin 2 (PD2 / PCINT18) for PIR HIGH motion detection
     PCIFR |= (1 << PCIF2);     // Clear pending interrupt flag
     PCICR |= (1 << PCIE2);     // Enable PCINT bank 2
     PCMSK2 |= (1 << PCINT18);  // Enable PCINT18 (Pin 2)
+
+    // Configure INT0 for LOW level wake as backup
+    EICRA &= ~((1 << ISC01) | (1 << ISC00));
+    EIFR = (1 << INTF0);
+    EIMSK |= (1 << INT0);
 
     set_sleep_mode(SLEEP_MODE_PWR_DOWN);
     sleep_enable();
@@ -828,6 +843,10 @@ void sleepSystem() {
         ina219_present = false;
         lastInaRetry = millis();
     }
+
+    EICRA = (1 << ISC01) | (1 << ISC00); // Back to RISING
+    EIFR = (1 << INTF0);
+    EIMSK |= (1 << INT0);
 
     prevSolarV = -1.0f;
     lastMppt = millis();
@@ -861,9 +880,6 @@ void restoreHardware() {
     digitalWrite(PIN_LED_PWM, LOW);
     pinMode(PIN_PIR, INPUT_PULLUP);
 
-    // Disable INT0
-    EIMSK &= ~(1 << INT0);
-
     // Enable PCINT2 for Pin 2 (PD2 / PCINT18)
     PCIFR |= (1 << PCIF2);     // Clear pending interrupt flag
     PCICR |= (1 << PCIE2);     // Enable PCINT bank 2
@@ -883,4 +899,38 @@ void restoreHardware() {
     // --- Restore Timer2 (Pins 3, 11) ---
     TCCR2A = _BV(COM2A1) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
     TCCR2B = _BV(CS22);
+}
+
+
+int main() {
+    sim.vcc = 5.0;
+    sim.batteryV = 3.3;
+    sim.solarOCV = 18.0;
+
+    setup();
+
+    Serial.println("[SYNCHRONOUS PWM TEST]");
+
+    // Day/Night debounce is 60s. To skip it in test, we force state.
+    sys.isDark = false;
+    current_charge_stage = 'B';
+
+    // Run long enough for MPPT to ramp up
+    for(int i=0; i<200; i++) {
+        update_sim();
+        loop();
+        if (OCR1A > 100) break;
+    }
+
+    Serial.print("Duty A (OCR1A): "); Serial.println(OCR1A);
+    Serial.print("Duty B (OCR1B): "); Serial.println(OCR1B);
+
+    // In Phase Correct mode (OC1B inverted), OCR1B must be > OCR1A for deadtime
+    if (OCR1A > 100 && OCR1B > OCR1A) {
+        Serial.println("SYNC SIGNAL ACTIVE WITH DEADTIME");
+    } else {
+        Serial.println("SYNC SIGNAL FAILURE");
+    }
+
+    return 0;
 }
